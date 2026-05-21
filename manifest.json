@@ -1,0 +1,14 @@
+{
+  "name": "AAFCO 格式轉換",
+  "short_name": "格式轉換",
+  "description": "將 DOCX 套用 AAFCO 精算報告標準格式",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1a1a1a",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "icon-512.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
