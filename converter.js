@@ -438,8 +438,8 @@ function buildTOC11Para(doc, anchor, titleText, pageText, isFirst) {
 
   // Hyperlink with title text
   const hl = makeHyperlink(doc, anchor);
-  // Parse chapter title: "第一章　研究背景" -> multiple runs
-  const parts = titleText.split(/(\s+)/);
+  // 保留原始標題文字（含全形空格\u3000），按空白分割
+  const parts = titleText.split(/([\s\u3000]+)/);
   parts.forEach(part => {
     if (!part) return;
     const r = wEl(doc, 'r'); const rPr = wEl(doc, 'rPr'); r.appendChild(rPr);
