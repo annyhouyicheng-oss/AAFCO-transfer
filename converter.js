@@ -70,7 +70,9 @@ function applyBody(para) {
 function applyH1(para) {
   const pPr = ensurePPr(para);
   const ps = goc(pPr,'pStyle'); sw(ps,'val','1');
-  const sp = goc(pPr,'spacing'); sw(sp,'line','480'); sw(sp,'lineRule','auto'); sw(sp,'before','0'); sw(sp,'after','0');
+  // 修正1: spacing 只保留 line/lineRule，無 before/after
+  const sp = goc(pPr,'spacing'); sw(sp,'line','480'); sw(sp,'lineRule','auto');
+  rmAttr(sp,'before'); rmAttr(sp,'after');
   const ind = goc(pPr,'ind'); sw(ind,'firstLine','0');
   rm(pPr,'jc');
   const pRPr = goc(pPr,'rPr'); clearEl(pRPr);
@@ -80,8 +82,8 @@ function applyH1(para) {
   const c0 = makeEl(para.ownerDocument,'color');
   c0.setAttributeNS(W_NS,'w:val','000000'); c0.setAttributeNS(W_NS,'w:themeColor','text1');
   pRPr.appendChild(c0);
+  // 修正2: sz 只加 sz，不加 szCs（模板無 szCs）
   const s0 = makeEl(para.ownerDocument,'sz'); s0.setAttributeNS(W_NS,'w:val','28'); pRPr.appendChild(s0);
-  const sc0 = makeEl(para.ownerDocument,'szCs'); sc0.setAttributeNS(W_NS,'w:val','28'); pRPr.appendChild(sc0);
   directRuns(para).forEach(run => {
     const rPr = ensureRPr(run); clearEl(rPr);
     const rF = makeEl(run.ownerDocument,'rFonts');
@@ -90,8 +92,8 @@ function applyH1(para) {
     const c = makeEl(run.ownerDocument,'color');
     c.setAttributeNS(W_NS,'w:val','000000'); c.setAttributeNS(W_NS,'w:themeColor','text1');
     rPr.appendChild(c);
+    // 修正2: 不加 szCs
     const s = makeEl(run.ownerDocument,'sz'); s.setAttributeNS(W_NS,'w:val','28'); rPr.appendChild(s);
-    const sc = makeEl(run.ownerDocument,'szCs'); sc.setAttributeNS(W_NS,'w:val','28'); rPr.appendChild(sc);
   });
 }
 
@@ -205,7 +207,9 @@ function applyTable(tbl) {
       shd.setAttributeNS(W_NS,'w:val','clear'); shd.setAttributeNS(W_NS,'w:color','auto'); shd.setAttributeNS(W_NS,'w:fill','auto');
       const tcMar = goc(tcPr,'tcMar');
       [['top','80'],['left','120'],['bottom','80'],['right','120']].forEach(([s,v])=>{ const m=goc(tcMar,s);sw(m,'w',v);sw(m,'type','dxa'); });
-      if (isHeader) tcPr.appendChild(cell.ownerDocument.createElementNS(W_NS,'w:hideMark'));
+      // 修正3: 所有列所有儲存格都加 hideMark（模板行為）
+      rm(tcPr,'hideMark');
+      tcPr.appendChild(cell.ownerDocument.createElementNS(W_NS,'w:hideMark'));
 
       const paras = [...cell.childNodes].filter(c=>c.localName==='p'&&c.namespaceURI===W_NS);
       paras.forEach(para => {
