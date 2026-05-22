@@ -141,19 +141,19 @@ function applyCover(para) {
 }
 
 function applyH1(para) {
+  // 完全對應模板:
+  // pPr: pStyle=1, spacing(before=0,after=0,line=480,lineRule=auto), ind(firstLine=0), 無rPr
+  // run: rFonts(TNR), color(000000+text1), sz=28, szCs=28
   const doc = para.ownerDocument;
   const pPr = ensurePPr(para);
   const ps = goc(pPr, 'pStyle'); wSet(ps, 'val', '1');
   const sp = goc(pPr, 'spacing');
   wSet(sp, 'line', '480'); wSet(sp, 'lineRule', 'auto');
-  rmAttr(sp, 'before'); rmAttr(sp, 'after');
+  wSet(sp, 'before', '0'); wSet(sp, 'after', '0');  // 明確設 before=0 after=0
   const ind = goc(pPr, 'ind'); wSet(ind, 'firstLine', '0');
   rmAttr(ind, 'hanging'); rmAttr(ind, 'left');
   rm(pPr, 'jc');
-  const pRPr = goc(pPr, 'rPr'); clearEl(pRPr);
-  pRPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-  pRPr.appendChild(makeSz(doc, '28'));
+  rm(pPr, 'rPr');   // 模板H1 pPr無rPr，直接刪除
 
   const allRuns = [...para.getElementsByTagNameNS(W_NS, 'r')];
   allRuns.forEach(run => {
@@ -161,6 +161,7 @@ function applyH1(para) {
     rPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
     rPr.appendChild(makeColor(doc, '000000', 'text1'));
     rPr.appendChild(makeSz(doc, '28'));
+    rPr.appendChild(makeSzCs(doc, '28'));  // 模板有szCs=28
   });
 }
 
@@ -280,7 +281,8 @@ function applyTable(tbl) {
           const rPr = ensureRPr(run); clearEl(rPr);
           rPr.appendChild(makeRFonts(doc, '標楷體', '標楷體', null, isHeader ? '新細明體' : '標楷體', 'eastAsia'));
           if (isHeader) rPr.appendChild(wEl(doc, 'bCs'));
-          rPr.appendChild(makeColor(doc, 'auto'));
+          // 模板header run有color=auto，data run無color元素
+          if (isHeader) rPr.appendChild(makeColor(doc, 'auto'));
           const k = wEl(doc, 'kern'); k.setAttributeNS(W_NS, 'w:val', '0'); rPr.appendChild(k);
         });
       });
