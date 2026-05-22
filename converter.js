@@ -136,16 +136,23 @@ function applyH2(para) {
 }
 
 function applyCover(para) {
+  // 修正: 封面段落統一 sz=28, szCs=28, 無粗體, color=000000+themeColor=text1
   const pPr = ensurePPr(para); rm(pPr,'pStyle');
   const sp = goc(pPr,'spacing'); sw(sp,'line','400'); sw(sp,'lineRule','exact');
+  rmAttr(sp,'before'); rmAttr(sp,'after');
   const ind = goc(pPr,'ind'); sw(ind,'firstLine','0');
   const jc = goc(pPr,'jc'); sw(jc,'val','center');
   const pRPr = goc(pPr,'rPr'); clearEl(pRPr);
+  const pc = makeEl(para.ownerDocument,'color');
+  pc.setAttributeNS(W_NS,'w:val','000000'); pc.setAttributeNS(W_NS,'w:themeColor','text1');
+  pRPr.appendChild(pc);
   directRuns(para).forEach(run => {
-    const rPr = ensureRPr(run);
-    ['i','iCs','u','highlight','shd','rStyle'].forEach(t => rm(rPr,t));
-    const color = [...rPr.childNodes].find(c=>c.localName==='color');
-    if (color) { color.setAttributeNS(W_NS,'w:val','000000'); color.setAttributeNS(W_NS,'w:themeColor','text1'); }
+    const rPr = ensureRPr(run); clearEl(rPr);
+    const c = makeEl(run.ownerDocument,'color');
+    c.setAttributeNS(W_NS,'w:val','000000'); c.setAttributeNS(W_NS,'w:themeColor','text1');
+    rPr.appendChild(c);
+    const s = makeEl(run.ownerDocument,'sz'); s.setAttributeNS(W_NS,'w:val','28'); rPr.appendChild(s);
+    const sc = makeEl(run.ownerDocument,'szCs'); sc.setAttributeNS(W_NS,'w:val','28'); rPr.appendChild(sc);
   });
 }
 
