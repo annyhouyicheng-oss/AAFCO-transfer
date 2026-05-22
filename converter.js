@@ -124,6 +124,8 @@ function applyCover(para) {
   const jc = goc(pPr, 'jc'); wSet(jc, 'val', 'center');
   const pRPr = goc(pPr, 'rPr'); clearEl(pRPr);
   pRPr.appendChild(makeColor(doc, '000000', 'text1'));
+  pRPr.appendChild(makeSz(doc, '28'));
+  pRPr.appendChild(makeSzCs(doc, '28'));
 
   // Process ALL runs including those inside hyperlinks
   const allRuns = [...para.getElementsByTagNameNS(W_NS, 'r')];
@@ -348,7 +350,7 @@ function addBookmarks(body, headings, tables) {
     bkId++;
     if (pPr && pPr.nextSibling) {
       el.insertBefore(bkStart, pPr.nextSibling);
-      el.insertBefore(bkEnd, pPr.nextSibling);
+      el.insertBefore(bkEnd, bkStart.nextSibling);
     } else {
       el.appendChild(bkStart); el.appendChild(bkEnd);
     }
