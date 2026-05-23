@@ -1,847 +1,783 @@
-// ═══════════════════════════════════════════════════════════════
-// AAFCO DOCX 格式轉換引擎 v7 - 完整版（含目錄重建 + 書籤 + 封面修正）
-// ═══════════════════════════════════════════════════════════════
+/**
+ * AAFCO 精算報告格式轉換工具 — converter.js v19
+ * JavaScript port of format_converter_v19.py
+ * 依賴：JSZip (loaded via CDN in index.html)
+ */
 
-const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-const XML_NS = 'http://www.w3.org/XML/1998/namespace';
+const W  = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const W14 = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const XML_SPACE = 'http://www.w3.org/XML/1998/namespace';
 
-// ── XML 工具 ────────────────────────────────────────────────────
-function parseXML(str) { return new DOMParser().parseFromString(str, 'application/xml'); }
-function serXML(doc) { return new XMLSerializer().serializeToString(doc); }
+// ── XML helpers ──────────────────────────────────────────────
 
-function wEl(doc, name) { return doc.createElementNS(W_NS, 'w:' + name); }
-function wSet(el, attr, val) { el.setAttributeNS(W_NS, 'w:' + attr, String(val)); }
-function rSet(el, attr, val) { el.setAttributeNS(R_NS, 'r:' + attr, String(val)); }
-function xmlSet(el, attr, val) { el.setAttributeNS(XML_NS, 'xml:' + attr, val); }
+function wt(n) { return `{${W}}${n}`; }
 
-function clearEl(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+function parseXML(str) {
+  return new DOMParser().parseFromString(str, 'application/xml');
+}
 
-function getChildW(parent, localName) {
-  for (const c of parent.childNodes)
-    if (c.localName === localName && c.namespaceURI === W_NS) return c;
+function serializeXML(doc) {
+  return new XMLSerializer().serializeToString(doc);
+}
+
+function wElem(doc, tag) {
+  return doc.createElementNS(W, `w:${tag}`);
+}
+
+function wAttr(el, attr, val) {
+  el.setAttributeNS(W, `w:${attr}`, String(val));
+}
+
+function wGet(el, attr) {
+  return el.getAttributeNS(W, attr);
+}
+
+function findChild(el, tag) {
+  for (const c of el.childNodes) {
+    if (c.localName === tag && c.namespaceURI === W) return c;
+  }
   return null;
 }
-function getAllChildW(parent, localName) {
-  return [...parent.childNodes].filter(c => c.localName === localName && c.namespaceURI === W_NS);
+
+function findAll(el, tag) {
+  return Array.from(el.childNodes).filter(c => c.localName === tag && c.namespaceURI === W);
 }
-function goc(parent, localName) {
-  let el = getChildW(parent, localName);
-  if (!el) { el = wEl(parent.ownerDocument, localName); parent.appendChild(el); }
+
+function goc(doc, parent, tag) {
+  let el = findChild(parent, tag);
+  if (!el) { el = wElem(doc, tag); parent.appendChild(el); }
   return el;
 }
-function rm(parent, localName) {
-  getAllChildW(parent, localName).forEach(c => parent.removeChild(c));
-}
-function rmAttr(el, attr) { el.removeAttributeNS(W_NS, attr); }
 
-function ensurePPr(para) {
-  let pPr = getChildW(para, 'pPr');
-  if (!pPr) { pPr = wEl(para.ownerDocument, 'pPr'); para.insertBefore(pPr, para.firstChild); }
+function rm(parent, tag) {
+  for (const c of findAll(parent, tag)) parent.removeChild(c);
+}
+
+function rmAttr(el, attr) {
+  if (el.hasAttributeNS(W, attr)) el.removeAttributeNS(W, attr);
+}
+
+function getText(para) {
+  return Array.from(para.getElementsByTagNameNS(W, 't'))
+    .map(t => t.textContent || '').join('').trim();
+}
+
+function getStyle(para) {
+  const pPr = findChild(para, 'pPr');
+  if (!pPr) return 'Normal';
+  const ps = findChild(pPr, 'pStyle');
+  return ps ? (wGet(ps, 'val') || 'Normal') : 'Normal';
+}
+
+function directRuns(para) {
+  return findAll(para, 'r');
+}
+
+function ensurePPr(doc, para) {
+  let pPr = findChild(para, 'pPr');
+  if (!pPr) { pPr = wElem(doc, 'pPr'); para.insertBefore(pPr, para.firstChild); }
   return pPr;
 }
-function ensureRPr(run) {
-  let rPr = getChildW(run, 'rPr');
-  if (!rPr) { rPr = wEl(run.ownerDocument, 'rPr'); run.insertBefore(rPr, run.firstChild); }
+
+function ensureRPr(doc, run) {
+  let rPr = findChild(run, 'rPr');
+  if (!rPr) { rPr = wElem(doc, 'rPr'); run.insertBefore(rPr, run.firstChild); }
   return rPr;
 }
-function getStyle(para) {
-  const pPr = getChildW(para, 'pPr');
-  if (!pPr) return 'Normal';
-  const ps = getChildW(pPr, 'pStyle');
-  return ps ? (ps.getAttributeNS(W_NS, 'val') || 'Normal') : 'Normal';
-}
-function getText(para) {
-  let t = '';
-  const ts = para.getElementsByTagNameNS(W_NS, 't');
-  for (let i = 0; i < ts.length; i++) t += ts[i].textContent || '';
-  return t.trim();
-}
-function directRuns(el) {
-  return [...el.childNodes].filter(c => c.localName === 'r' && c.namespaceURI === W_NS);
+
+function clearChildren(el) {
+  while (el.firstChild) el.removeChild(el.firstChild);
 }
 
-// ── 基礎格式工具 ────────────────────────────────────────────────
-function makeRFonts(doc, ascii, hAnsi, eastAsia, cs, hint) {
-  const rF = wEl(doc, 'rFonts');
-  if (ascii) rF.setAttributeNS(W_NS, 'w:ascii', ascii);
-  if (hAnsi || ascii) rF.setAttributeNS(W_NS, 'w:hAnsi', hAnsi || ascii);
-  if (eastAsia) rF.setAttributeNS(W_NS, 'w:eastAsia', eastAsia);
-  if (cs) rF.setAttributeNS(W_NS, 'w:cs', cs);
-  if (hint) rF.setAttributeNS(W_NS, 'w:hint', hint);
-  return rF;
-}
-function makeColor(doc, val, themeColor) {
-  const c = wEl(doc, 'color'); c.setAttributeNS(W_NS, 'w:val', val);
-  if (themeColor) c.setAttributeNS(W_NS, 'w:themeColor', themeColor);
-  return c;
-}
-function makeSz(doc, val) {
-  const s = wEl(doc, 'sz'); s.setAttributeNS(W_NS, 'w:val', String(val)); return s;
-}
-function makeSzCs(doc, val) {
-  const s = wEl(doc, 'szCs'); s.setAttributeNS(W_NS, 'w:val', String(val)); return s;
-}
-function makeT(doc, text) {
-  const t = wEl(doc, 't');
-  if (text && (text.startsWith(' ') || text.endsWith(' '))) xmlSet(t, 'space', 'preserve');
-  t.textContent = text || '';
-  return t;
-}
-function makeRun(doc, { text, rStyle, ascii, eastAsia, cs, hint, noProof, webHidden, color, themeColor, sz, szCs, bold, kern, tab, fldChar, instrText } = {}) {
-  const r = wEl(doc, 'r');
-  const rPr = wEl(doc, 'rPr'); r.appendChild(rPr);
-  if (rStyle) { const rs = wEl(doc, 'rStyle'); rs.setAttributeNS(W_NS, 'w:val', rStyle); rPr.appendChild(rs); }
-  if (ascii || hint || cs || eastAsia) rPr.appendChild(makeRFonts(doc, ascii, ascii, eastAsia, cs, hint));
-  if (bold) rPr.appendChild(wEl(doc, 'b'));
-  if (noProof) rPr.appendChild(wEl(doc, 'noProof'));
-  if (webHidden) rPr.appendChild(wEl(doc, 'webHidden'));
-  if (color) rPr.appendChild(makeColor(doc, color, themeColor));
-  if (sz) rPr.appendChild(makeSz(doc, sz));
-  if (szCs) rPr.appendChild(makeSzCs(doc, szCs));
-  if (kern !== undefined) { const k = wEl(doc, 'kern'); k.setAttributeNS(W_NS, 'w:val', String(kern)); rPr.appendChild(k); }
-  if (tab) r.appendChild(wEl(doc, 'tab'));
-  if (fldChar) { const fc = wEl(doc, 'fldChar'); fc.setAttributeNS(W_NS, 'w:fldCharType', fldChar); r.appendChild(fc); }
-  if (instrText !== undefined) {
-    const it = wEl(doc, 'instrText'); xmlSet(it, 'space', 'preserve');
-    it.textContent = instrText; r.appendChild(it);
-  }
-  if (text !== undefined) r.appendChild(makeT(doc, text));
-  return r;
+function insertAfter(parent, newNode, refNode) {
+  const next = refNode.nextSibling;
+  if (next) parent.insertBefore(newNode, next);
+  else parent.appendChild(newNode);
 }
 
-// ── 段落格式函式 ────────────────────────────────────────────────
+function insertBefore(parent, newNode, refNode) {
+  parent.insertBefore(newNode, refNode);
+}
 
-// 修正：封面段落 — 統一 sz=28, szCs=28, 無粗體
-function applyCover(para) {
-  const doc = para.ownerDocument;
-  const pPr = ensurePPr(para); rm(pPr, 'pStyle');
-  const sp = goc(pPr, 'spacing');
-  wSet(sp, 'line', '400'); wSet(sp, 'lineRule', 'exact');
+function bodyChildren(body) {
+  return Array.from(body.childNodes).filter(n => n.nodeType === 1);
+}
+
+// ── Paragraph formatters ──────────────────────────────────────
+
+function applyH1(doc, para) {
+  const pPr = ensurePPr(doc, para);
+  wAttr(goc(doc, pPr, 'pStyle'), 'val', '1');
+  const sp = goc(doc, pPr, 'spacing');
+  wAttr(sp, 'line', '480'); wAttr(sp, 'lineRule', 'auto');
   rmAttr(sp, 'before'); rmAttr(sp, 'after');
-  const ind = goc(pPr, 'ind'); wSet(ind, 'firstLine', '0');
-  rmAttr(ind, 'hanging'); rmAttr(ind, 'left');
-  const jc = goc(pPr, 'jc'); wSet(jc, 'val', 'center');
-  const pRPr = goc(pPr, 'rPr'); clearEl(pRPr);
-  pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-  pRPr.appendChild(makeSz(doc, '28'));
-  pRPr.appendChild(makeSzCs(doc, '28'));
-
-  // Process ALL runs including those inside hyperlinks
-  const allRuns = [...para.getElementsByTagNameNS(W_NS, 'r')];
-  allRuns.forEach(run => {
-    // Only direct children of para or hyperlinks in para
-    const rPr = ensureRPr(run);
-    clearEl(rPr);
-    // sz=28, szCs=28, color=000000+themeColor=text1, no bold
-    rPr.appendChild(makeColor(doc, '000000', 'text1'));
-    rPr.appendChild(makeSz(doc, '28'));
-    rPr.appendChild(makeSzCs(doc, '28'));
-    // Keep original font by NOT adding rFonts (inherit from style)
-    // but DO ensure no bold
-  });
-}
-
-function applyH1(para) {
-  // 完全對應模板:
-  // pPr: pStyle=1, spacing(before=0,after=0,line=480,lineRule=auto), ind(firstLine=0), 無rPr
-  // run: rFonts(TNR), color(000000+text1), sz=28, szCs=28
-  const doc = para.ownerDocument;
-  const pPr = ensurePPr(para);
-  const ps = goc(pPr, 'pStyle'); wSet(ps, 'val', '1');
-  const sp = goc(pPr, 'spacing');
-  wSet(sp, 'line', '480'); wSet(sp, 'lineRule', 'auto');
-  wSet(sp, 'before', '0'); wSet(sp, 'after', '0');  // 明確設 before=0 after=0
-  const ind = goc(pPr, 'ind'); wSet(ind, 'firstLine', '0');
+  const ind = goc(doc, pPr, 'ind');
+  wAttr(ind, 'firstLine', '0');
   rmAttr(ind, 'hanging'); rmAttr(ind, 'left');
   rm(pPr, 'jc');
-  rm(pPr, 'rPr');   // 模板H1 pPr無rPr，直接刪除
+  const pPrRpr = goc(doc, pPr, 'rPr');
+  clearChildren(pPrRpr);
+  const rF0 = wElem(doc, 'rFonts');
+  rF0.setAttributeNS(W, 'w:ascii', 'Times New Roman');
+  rF0.setAttributeNS(W, 'w:hAnsi', 'Times New Roman');
+  pPrRpr.appendChild(rF0);
+  const c0 = wElem(doc, 'color');
+  wAttr(c0, 'val', '000000'); wAttr(c0, 'themeColor', 'text1');
+  pPrRpr.appendChild(c0);
+  const sz = wElem(doc, 'sz'); wAttr(sz, 'val', '28'); pPrRpr.appendChild(sz);
+  const szCs = wElem(doc, 'szCs'); wAttr(szCs, 'val', '28'); pPrRpr.appendChild(szCs);
 
-  const allRuns = [...para.getElementsByTagNameNS(W_NS, 'r')];
-  allRuns.forEach(run => {
-    const rPr = ensureRPr(run); clearEl(rPr);
-    rPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-    rPr.appendChild(makeColor(doc, '000000', 'text1'));
-    rPr.appendChild(makeSz(doc, '28'));
-    rPr.appendChild(makeSzCs(doc, '28'));  // 模板有szCs=28
-  });
+  for (const run of directRuns(para)) {
+    const rPr = ensureRPr(doc, run);
+    clearChildren(rPr);
+    const rF2 = wElem(doc, 'rFonts');
+    rF2.setAttributeNS(W, 'w:ascii', 'Times New Roman');
+    rF2.setAttributeNS(W, 'w:hAnsi', 'Times New Roman');
+    rPr.appendChild(rF2);
+    const c2 = wElem(doc, 'color');
+    wAttr(c2, 'val', '000000'); wAttr(c2, 'themeColor', 'text1');
+    rPr.appendChild(c2);
+    const sz2 = wElem(doc, 'sz'); wAttr(sz2, 'val', '28'); rPr.appendChild(sz2);
+    const szCs2 = wElem(doc, 'szCs'); wAttr(szCs2, 'val', '28'); rPr.appendChild(szCs2);
+  }
 }
 
-function applyH2(para) {
-  const doc = para.ownerDocument;
-  const pPr = ensurePPr(para);
-  const ps = goc(pPr, 'pStyle'); wSet(ps, 'val', '2');
+function applyH2(doc, para, numId) {
+  const text = getText(para);
+  const hasJiePrefix = /^第[一二三四五六七八九十百]+節[\s\u3000]/.test(text);
+
+  const pPr = ensurePPr(doc, para);
+  wAttr(goc(doc, pPr, 'pStyle'), 'val', '2');
   rm(pPr, 'spacing'); rm(pPr, 'ind'); rm(pPr, 'numPr');
 
-  const numPr = wEl(doc, 'numPr');
-  const ilvl = wEl(doc, 'ilvl'); wSet(ilvl, 'val', '0'); numPr.appendChild(ilvl);
-  const numId = wEl(doc, 'numId'); wSet(numId, 'val', '3'); numPr.appendChild(numId);
-  const siblings = [...pPr.childNodes];
-  const psIdx = siblings.indexOf(ps);
-  if (psIdx >= 0 && psIdx + 1 < siblings.length) pPr.insertBefore(numPr, siblings[psIdx + 1]);
-  else pPr.appendChild(numPr);
+  if (hasJiePrefix && numId != null) {
+    for (const run of directRuns(para)) {
+      const t = findChild(run, 't');
+      if (t && t.textContent) {
+        t.textContent = t.textContent.replace(/^第[一二三四五六七八九十百]+節[\s\u3000]+/, '');
+      }
+    }
+    const numPr = wElem(doc, 'numPr');
+    const ilvl = wElem(doc, 'ilvl'); wAttr(ilvl, 'val', '0'); numPr.appendChild(ilvl);
+    const numIdEl = wElem(doc, 'numId'); wAttr(numIdEl, 'val', String(numId)); numPr.appendChild(numIdEl);
+    const psEl = findChild(pPr, 'pStyle');
+    insertAfter(pPr, numPr, psEl);
+  }
 
-  const pRPr = goc(pPr, 'rPr'); clearEl(pRPr);
-  pRPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  const b0 = wEl(doc, 'b'); b0.setAttributeNS(W_NS, 'w:val', '0'); pRPr.appendChild(b0);
-  const bc0 = wEl(doc, 'bCs'); bc0.setAttributeNS(W_NS, 'w:val', '0'); pRPr.appendChild(bc0);
-  pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-  pRPr.appendChild(makeSz(doc, '24')); pRPr.appendChild(makeSzCs(doc, '24'));
+  const pPrRpr = goc(doc, pPr, 'rPr');
+  clearChildren(pPrRpr);
+  const rF = wElem(doc, 'rFonts');
+  rF.setAttributeNS(W, 'w:ascii', 'Times New Roman');
+  rF.setAttributeNS(W, 'w:hAnsi', 'Times New Roman');
+  pPrRpr.appendChild(rF);
+  const bv = wElem(doc, 'b'); wAttr(bv, 'val', '0'); pPrRpr.appendChild(bv);
+  const bcsv = wElem(doc, 'bCs'); wAttr(bcsv, 'val', '0'); pPrRpr.appendChild(bcsv);
+  const cv = wElem(doc, 'color'); wAttr(cv, 'val', '000000'); wAttr(cv, 'themeColor', 'text1'); pPrRpr.appendChild(cv);
+  const szv = wElem(doc, 'sz'); wAttr(szv, 'val', '24'); pPrRpr.appendChild(szv);
+  const szcsv = wElem(doc, 'szCs'); wAttr(szcsv, 'val', '24'); pPrRpr.appendChild(szcsv);
 
-  const allRuns = [...para.getElementsByTagNameNS(W_NS, 'r')];
-  allRuns.forEach(run => {
-    const rPr = ensureRPr(run); clearEl(rPr);
-    rPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman', null, null, 'eastAsia'));
-    const b = wEl(doc, 'b'); b.setAttributeNS(W_NS, 'w:val', '0'); rPr.appendChild(b);
-    const bc = wEl(doc, 'bCs'); bc.setAttributeNS(W_NS, 'w:val', '0'); rPr.appendChild(bc);
-    rPr.appendChild(makeColor(doc, '000000', 'text1'));
-    rPr.appendChild(makeSz(doc, '24')); rPr.appendChild(makeSzCs(doc, '24'));
-  });
+  for (const run of directRuns(para)) {
+    const rPr = ensureRPr(doc, run);
+    clearChildren(rPr);
+    const rF2 = wElem(doc, 'rFonts');
+    rF2.setAttributeNS(W, 'w:ascii', 'Times New Roman');
+    rF2.setAttributeNS(W, 'w:hAnsi', 'Times New Roman');
+    rF2.setAttributeNS(W, 'w:hint', 'eastAsia');
+    rPr.appendChild(rF2);
+    const b2 = wElem(doc, 'b'); wAttr(b2, 'val', '0'); rPr.appendChild(b2);
+    const bcs2 = wElem(doc, 'bCs'); wAttr(bcs2, 'val', '0'); rPr.appendChild(bcs2);
+    const c2 = wElem(doc, 'color'); wAttr(c2, 'val', '000000'); wAttr(c2, 'themeColor', 'text1'); rPr.appendChild(c2);
+    const sz2 = wElem(doc, 'sz'); wAttr(sz2, 'val', '24'); rPr.appendChild(sz2);
+    const szCs2 = wElem(doc, 'szCs'); wAttr(szCs2, 'val', '24'); rPr.appendChild(szCs2);
+  }
 }
 
-function applyBody(para) {
-  const doc = para.ownerDocument;
-  const pPr = ensurePPr(para); rm(pPr, 'pStyle');
-  const sp = goc(pPr, 'spacing');
-  wSet(sp, 'before', '80'); wSet(sp, 'after', '80');
+function applyBody(doc, para) {
+  const pPr = ensurePPr(doc, para);
+  rm(pPr, 'pStyle');
+  const sp = goc(doc, pPr, 'spacing');
+  wAttr(sp, 'before', '80'); wAttr(sp, 'after', '80');
   rmAttr(sp, 'line'); rmAttr(sp, 'lineRule');
-  const ind = goc(pPr, 'ind'); wSet(ind, 'firstLine', '480');
+  const ind = goc(doc, pPr, 'ind');
   rmAttr(ind, 'hanging'); rmAttr(ind, 'left');
-  const jc = goc(pPr, 'jc'); wSet(jc, 'val', 'both');
-  const pRPr = goc(pPr, 'rPr'); clearEl(pRPr);
-  pRPr.appendChild(makeColor(doc, 'auto'));
+  const textForJc = getText(para);
+  const isCaption = /^表\s*\d/.test(textForJc);
+  if (isCaption) {
+    wAttr(goc(doc, pPr, 'jc'), 'val', 'left');
+    wAttr(ind, 'firstLine', '0');
+  } else {
+    wAttr(goc(doc, pPr, 'jc'), 'val', 'both');
+    wAttr(ind, 'firstLine', '480');
+  }
+  const pPrRpr = goc(doc, pPr, 'rPr');
+  clearChildren(pPrRpr);
+  wAttr(wElem(doc, 'color'), 'val', 'auto'); // placeholder — appendChild below
+  const cEl = wElem(doc, 'color'); wAttr(cEl, 'val', 'auto'); pPrRpr.appendChild(cEl);
 
-  directRuns(para).forEach(run => {
-    const rPr = ensureRPr(run); clearEl(rPr);
-    rPr.appendChild(makeRFonts(doc, null, null, null, null, 'eastAsia'));
-  });
+  for (const run of directRuns(para)) {
+    const rPr = findChild(run, 'rPr');
+    if (rPr) clearChildren(rPr);
+  }
 }
 
-function applyEmpty(para) {
-  const pPr = ensurePPr(para); rm(pPr, 'pStyle');
-  const sp = goc(pPr, 'spacing');
-  wSet(sp, 'line', '480'); wSet(sp, 'lineRule', 'auto');
+function makeEmptyCoverPara(doc) {
+  const p = wElem(doc, 'p');
+  const pPr = wElem(doc, 'pPr'); p.appendChild(pPr);
+  const sp = wElem(doc, 'spacing'); wAttr(sp, 'line', '400'); wAttr(sp, 'lineRule', 'exact'); pPr.appendChild(sp);
+  const ind = wElem(doc, 'ind'); wAttr(ind, 'firstLine', '0'); pPr.appendChild(ind);
+  const jc = wElem(doc, 'jc'); wAttr(jc, 'val', 'center'); pPr.appendChild(jc);
+  const rPr = wElem(doc, 'rPr'); pPr.appendChild(rPr);
+  const c = wElem(doc, 'color'); wAttr(c, 'val', '000000'); wAttr(c, 'themeColor', 'text1'); rPr.appendChild(c);
+  const sz = wElem(doc, 'sz'); wAttr(sz, 'val', '28'); rPr.appendChild(sz);
+  const szCs = wElem(doc, 'szCs'); wAttr(szCs, 'val', '28'); rPr.appendChild(szCs);
+  return p;
 }
 
-// ── 表格格式 ────────────────────────────────────────────────────
-function applyTable(tbl) {
-  const doc = tbl.ownerDocument;
-  let tblPr = getChildW(tbl, 'tblPr');
-  if (!tblPr) { tblPr = wEl(doc, 'tblPr'); tbl.insertBefore(tblPr, tbl.firstChild); }
+function applyCover(doc, para) {
+  const paraText = getText(para);
+
+  // Remove leading spaces and 第二部分 from cover runs
+  for (const run of directRuns(para)) {
+    const t = findChild(run, 't');
+    if (t && t.textContent) {
+      t.textContent = t.textContent.replace('（第二部分）', '').replace('(第二部分)', '');
+      if (['專案編號', '研發配方', '目標對象'].some(kw => t.textContent.includes(kw))) {
+        t.textContent = t.textContent.replace(/^\s+/, '');
+      }
+    }
+  }
+
+  const LEFT_KW = ['專案編號', '研發配方', '目標對象'];
+  const isLeft = LEFT_KW.some(kw => paraText.includes(kw));
+
+  const pPr = ensurePPr(doc, para);
+  rm(pPr, 'pStyle'); rm(pPr, 'pBdr');
+  const sp = goc(doc, pPr, 'spacing'); wAttr(sp, 'line', '400'); wAttr(sp, 'lineRule', 'exact');
+  rmAttr(sp, 'before'); rmAttr(sp, 'after');
+  const ind = goc(doc, pPr, 'ind'); wAttr(ind, 'firstLine', '0');
+  rmAttr(ind, 'firstLineChars'); rmAttr(ind, 'hanging'); rmAttr(ind, 'left');
+  wAttr(goc(doc, pPr, 'jc'), 'val', isLeft ? 'left' : 'center');
+  const pPrRpr = goc(doc, pPr, 'rPr');
+  clearChildren(pPrRpr);
+  const c0 = wElem(doc, 'color'); wAttr(c0, 'val', '000000'); wAttr(c0, 'themeColor', 'text1'); pPrRpr.appendChild(c0);
+  const sz = wElem(doc, 'sz'); wAttr(sz, 'val', '28'); pPrRpr.appendChild(sz);
+  const szCs = wElem(doc, 'szCs'); wAttr(szCs, 'val', '28'); pPrRpr.appendChild(szCs);
+
+  for (const run of directRuns(para)) {
+    const rPr = ensureRPr(doc, run);
+    clearChildren(rPr);
+    const c = wElem(doc, 'color'); wAttr(c, 'val', '000000'); wAttr(c, 'themeColor', 'text1'); rPr.appendChild(c);
+    const sz2 = wElem(doc, 'sz'); wAttr(sz2, 'val', '28'); rPr.appendChild(sz2);
+    const szCs2 = wElem(doc, 'szCs'); wAttr(szCs2, 'val', '28'); rPr.appendChild(szCs2);
+  }
+}
+
+function applyEmpty(doc, para) {
+  const pPr = ensurePPr(doc, para);
+  rm(pPr, 'pStyle');
+  const sp = goc(doc, pPr, 'spacing'); wAttr(sp, 'line', '480'); wAttr(sp, 'lineRule', 'auto');
+}
+
+function applyTocLine(doc, para) {
+  const pPr = ensurePPr(doc, para);
+  rm(pPr, 'pStyle');
+  const sp = goc(doc, pPr, 'spacing'); wAttr(sp, 'line', '480'); wAttr(sp, 'lineRule', 'auto');
+}
+
+// ── Table formatter ───────────────────────────────────────────
+
+function applyTable(doc, tbl, ti) {
+  let tblPr = findChild(tbl, 'tblPr');
+  if (!tblPr) { tblPr = wElem(doc, 'tblPr'); tbl.insertBefore(tblPr, tbl.firstChild); }
   rm(tblPr, 'tblBorders'); rm(tblPr, 'tblStyle'); rm(tblPr, 'tblLook');
-  const tblW = goc(tblPr, 'tblW'); wSet(tblW, 'w', '9355'); wSet(tblW, 'type', 'dxa');
-  const jcT = goc(tblPr, 'jc'); wSet(jcT, 'val', 'center');
-  const tcm = goc(tblPr, 'tblCellMar');
-  const ml = goc(tcm, 'left'); wSet(ml, 'w', '10'); wSet(ml, 'type', 'dxa');
-  const mr = goc(tcm, 'right'); wSet(mr, 'w', '10'); wSet(mr, 'type', 'dxa');
-  const tblLook = wEl(doc, 'tblLook');
-  ['val','04A0','firstRow','1','lastRow','0','firstColumn','1','lastColumn','0','noHBand','0','noVBand','1']
-    .reduce((a, v, i) => { if (i % 2) tblLook.setAttributeNS(W_NS, 'w:' + a, v); return v; });
-  // Fix tblLook attributes properly
-  tblLook.setAttributeNS(W_NS, 'w:val', '04A0');
-  tblLook.setAttributeNS(W_NS, 'w:firstRow', '1'); tblLook.setAttributeNS(W_NS, 'w:lastRow', '0');
-  tblLook.setAttributeNS(W_NS, 'w:firstColumn', '1'); tblLook.setAttributeNS(W_NS, 'w:lastColumn', '0');
-  tblLook.setAttributeNS(W_NS, 'w:noHBand', '0'); tblLook.setAttributeNS(W_NS, 'w:noVBand', '1');
+  const tblW = goc(doc, tblPr, 'tblW'); wAttr(tblW, 'w', '9746'); wAttr(tblW, 'type', 'dxa');
+  wAttr(goc(doc, tblPr, 'jc'), 'val', 'center');
+  const tblCellMar = goc(doc, tblPr, 'tblCellMar');
+  const left = goc(doc, tblCellMar, 'left'); wAttr(left, 'w', '10'); wAttr(left, 'type', 'dxa');
+  const right = goc(doc, tblCellMar, 'right'); wAttr(right, 'w', '10'); wAttr(right, 'type', 'dxa');
+  const tblLook = wElem(doc, 'tblLook');
+  wAttr(tblLook, 'val', '04A0'); wAttr(tblLook, 'firstRow', '1'); wAttr(tblLook, 'lastRow', '0');
+  wAttr(tblLook, 'firstColumn', '1'); wAttr(tblLook, 'lastColumn', '0');
+  wAttr(tblLook, 'noHBand', '0'); wAttr(tblLook, 'noVBand', '1');
   tblPr.appendChild(tblLook);
 
-  const rows = getAllChildW(tbl, 'tr');
+  const TABLE3_SUBHEADERS = ['蛋白質與胺基酸', '脂肪與脂肪酸', '維生素', '礦物質'];
+  const TABLE3_NO_BORDER_ROWS = [
+    '維生素A Vitamin A', '維生素D Vitamin D3', '維生素E Vitamin E',
+    '維生素B1 Thiamine', '維生素B2 Riboflavin', '菸鹼酸 Niacin (B3)', '維生素B6 Pyridoxine'
+  ];
+
+  const rows = findAll(tbl, 'tr');
+  const totalRows = rows.length;
+
   rows.forEach((row, ri) => {
     const isHeader = ri === 0;
-    let trPr = getChildW(row, 'trPr');
-    if (!trPr) { trPr = wEl(doc, 'trPr'); row.insertBefore(trPr, row.firstChild); }
-    if (isHeader) { const jcR = goc(trPr, 'jc'); wSet(jcR, 'val', 'center'); }
+    const isLast = ri === totalRows - 1;
+    let trPr = findChild(row, 'trPr');
+    if (!trPr) { trPr = wElem(doc, 'trPr'); row.insertBefore(trPr, row.firstChild); }
+    if (isHeader) wAttr(goc(doc, trPr, 'jc'), 'val', 'center');
 
-    getAllChildW(row, 'tc').forEach(cell => {
-      let tcPr = getChildW(cell, 'tcPr');
-      if (!tcPr) { tcPr = wEl(doc, 'tcPr'); cell.insertBefore(tcPr, cell.firstChild); }
-      rm(tcPr, 'tcBorders'); rm(tcPr, 'hideMark');
-      const tcBorders = wEl(doc, 'tcBorders');
-      const bEl = wEl(doc, isHeader ? 'bottom' : 'top');
-      bEl.setAttributeNS(W_NS, 'w:val', 'single'); bEl.setAttributeNS(W_NS, 'w:sz', '4');
-      bEl.setAttributeNS(W_NS, 'w:space', '0'); bEl.setAttributeNS(W_NS, 'w:color', 'auto');
-      tcBorders.appendChild(bEl);
-      const tcWel = getChildW(tcPr, 'tcW');
-      if (tcWel) tcPr.insertBefore(tcBorders, tcWel.nextSibling); else tcPr.insertBefore(tcBorders, tcPr.firstChild);
-      const shd = goc(tcPr, 'shd');
-      shd.setAttributeNS(W_NS, 'w:val', 'clear'); shd.setAttributeNS(W_NS, 'w:color', 'auto'); shd.setAttributeNS(W_NS, 'w:fill', 'auto');
-      const tcMar = goc(tcPr, 'tcMar');
-      [['top','80'],['left','120'],['bottom','80'],['right','120']].forEach(([s,v]) => { const m = goc(tcMar, s); wSet(m,'w',v); wSet(m,'type','dxa'); });
-      // hideMark on ALL rows/cells
-      tcPr.appendChild(wEl(doc, 'hideMark'));
+    const cells = findAll(row, 'tc');
+    cells.forEach(cell => {
+      let tcPr = findChild(cell, 'tcPr');
+      if (!tcPr) { tcPr = wElem(doc, 'tcPr'); cell.insertBefore(tcPr, cell.firstChild); }
+      rm(tcPr, 'tcBorders');
+      const tcBorders = wElem(doc, 'tcBorders');
+      const tcW = findChild(tcPr, 'tcW');
+      if (tcW) insertAfter(tcPr, tcBorders, tcW);
+      else tcPr.insertBefore(tcBorders, tcPr.firstChild);
 
-      getAllChildW(cell, 'p').forEach(para => {
-        const pPr = ensurePPr(para); rm(pPr, 'pStyle'); rm(pPr, 'jc');
-        const wc = goc(pPr, 'widowControl'); wSet(wc, 'val', '0');
-        const sp = goc(pPr, 'spacing'); wSet(sp,'before','60'); wSet(sp,'after','60'); wSet(sp,'line','240'); wSet(sp,'lineRule','auto');
-        const ind = goc(pPr, 'ind'); wSet(ind, 'firstLine', '0');
-        const pRPr = goc(pPr, 'rPr'); clearEl(pRPr);
-        pRPr.appendChild(makeRFonts(doc, '標楷體', '標楷體', null, '標楷體'));
-        pRPr.appendChild(makeColor(doc, 'auto'));
-        const kern = wEl(doc, 'kern'); kern.setAttributeNS(W_NS, 'w:val', '0'); pRPr.appendChild(kern);
+      const rowText = Array.from(cell.getElementsByTagNameNS(W, 't')).map(t => t.textContent).join('');
+      const isNoBorder = ti === 2 && !isHeader && TABLE3_NO_BORDER_ROWS.some(s => rowText.includes(s));
+      const isSubhdr = ti === 2 && !isHeader && !isNoBorder && TABLE3_SUBHEADERS.some(s => rowText.includes(s));
 
-        directRuns(para).forEach(run => {
-          const rPr = ensureRPr(run); clearEl(rPr);
-          rPr.appendChild(makeRFonts(doc, '標楷體', '標楷體', null, isHeader ? '新細明體' : '標楷體', 'eastAsia'));
-          if (isHeader) rPr.appendChild(wEl(doc, 'bCs'));
-          // 模板header run有color=auto，data run無color元素
-          if (isHeader) rPr.appendChild(makeColor(doc, 'auto'));
-          const k = wEl(doc, 'kern'); k.setAttributeNS(W_NS, 'w:val', '0'); rPr.appendChild(k);
-        });
-      });
-    });
-  });
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 目錄重建系統
-// ═══════════════════════════════════════════════════════════════
-
-function extractHeadings(body) {
-  const children = [...body.childNodes].filter(n => n.nodeType === 1);
-  const headings = [];
-  const tables = [];
-  let hCounter = 1;
-
-  children.forEach((el, i) => {
-    if (el.localName === 'p' && el.namespaceURI === W_NS) {
-      const style = getStyle(el);
-      const text = getText(el);
-      if (!text) return;
-      if (style === '1') {
-        headings.push({ level: 1, text, anchor: `_AutoH1${String(hCounter++).padStart(9,'0')}`, idx: i });
-      } else if (style === '2') {
-        headings.push({ level: 2, text, anchor: `_AutoH2${String(hCounter++).padStart(9,'0')}`, idx: i });
+      function addBorder(tag, sz) {
+        const b = wElem(doc, tag);
+        wAttr(b, 'val', 'single'); wAttr(b, 'sz', sz); wAttr(b, 'space', '0'); wAttr(b, 'color', 'auto');
+        tcBorders.appendChild(b);
       }
-    } else if (el.localName === 'tbl' && el.namespaceURI === W_NS) {
-      // Find caption: paragraph before table with '表' in text
-      for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
-        const prev = children[j];
-        if (prev && prev.localName === 'p' && prev.namespaceURI === W_NS) {
-          const t = getText(prev);
-          if (t && t.includes('表') && t.length > 2) {
-            tables.push({ title: t, anchor: `_AutoTbl${String(hCounter++).padStart(9,'0')}`, idx: j });
-            break;
+
+      if (isHeader) { addBorder('top', '12'); addBorder('bottom', '4'); }
+      else if (isLast) { addBorder('bottom', '12'); }
+      else if (isSubhdr) { addBorder('top', '4'); addBorder('bottom', '4'); }
+
+      const shd = goc(doc, tcPr, 'shd');
+      wAttr(shd, 'val', 'clear'); wAttr(shd, 'color', 'auto'); wAttr(shd, 'fill', 'auto');
+      const tcMar = goc(doc, tcPr, 'tcMar');
+      for (const [side, val] of [['top','80'],['left','120'],['bottom','80'],['right','120']]) {
+        const m = goc(doc, tcMar, side); wAttr(m, 'w', val); wAttr(m, 'type', 'dxa');
+      }
+      rm(tcPr, 'hideMark');
+      tcPr.appendChild(wElem(doc, 'hideMark'));
+
+      for (const para of findAll(cell, 'p')) {
+        const pPr = ensurePPr(doc, para);
+        rm(pPr, 'pStyle'); rm(pPr, 'jc');
+        wAttr(goc(doc, pPr, 'widowControl'), 'val', '0');
+        const sp = goc(doc, pPr, 'spacing');
+        wAttr(sp, 'before', '60'); wAttr(sp, 'after', '60'); wAttr(sp, 'line', '240'); wAttr(sp, 'lineRule', 'auto');
+        wAttr(goc(doc, pPr, 'ind'), 'firstLine', '0');
+        const pPrRpr = goc(doc, pPr, 'rPr');
+        clearChildren(pPrRpr);
+        const cEl = wElem(doc, 'color'); wAttr(cEl, 'val', 'auto'); pPrRpr.appendChild(cEl);
+        const kernEl = wElem(doc, 'kern'); wAttr(kernEl, 'val', '0'); pPrRpr.appendChild(kernEl);
+
+        for (const run of findAll(para, 'r')) {
+          const origRpr = findChild(run, 'rPr');
+          let origColor = null;
+          if (origRpr) {
+            const origC = findChild(origRpr, 'color');
+            if (origC) {
+              const v = wGet(origC, 'val') || '';
+              if (v && !['AUTO', '000000', ''].includes(v.toUpperCase())) origColor = v;
+            }
           }
+          const rPr = ensureRPr(doc, run);
+          clearChildren(rPr);
+          if (isHeader) {
+            rPr.appendChild(wElem(doc, 'bCs'));
+            const c = wElem(doc, 'color'); wAttr(c, 'val', 'auto'); rPr.appendChild(c);
+          } else if (origColor) {
+            const c = wElem(doc, 'color'); wAttr(c, 'val', origColor); rPr.appendChild(c);
+          } else {
+            const cellText = getText(para);
+            let judgeColor = null;
+            if (cellText.includes('符合') || cellText.includes('PASS')) judgeColor = '006400';
+            else if (cellText.includes('不足') || cellText.includes('DEF')) judgeColor = 'CC0000';
+            else if (cellText.includes('邊緣') || cellText.includes('MAR')) judgeColor = '8B6914';
+            else if (cellText.includes('整體合規判定') || cellText.includes('DOES NOT MEET AAFCO')) judgeColor = 'FF0000';
+            if (judgeColor) { const c = wElem(doc, 'color'); wAttr(c, 'val', judgeColor); rPr.appendChild(c); }
+          }
+          const kEl = wElem(doc, 'kern'); wAttr(kEl, 'val', '0'); rPr.appendChild(kEl);
         }
       }
-    }
-  });
-  return { headings, tables };
-}
-
-function addBookmarks(body, headings, tables) {
-  const doc = body.ownerDocument;
-  const children = [...body.childNodes].filter(n => n.nodeType === 1);
-  let bkId = 10;
-
-  [...headings, ...tables].forEach(item => {
-    const el = children[item.idx];
-    if (!el || el.localName !== 'p') return;
-    // Remove old bookmarks
-    getAllChildW(el, 'bookmarkStart').forEach(b => el.removeChild(b));
-    getAllChildW(el, 'bookmarkEnd').forEach(b => el.removeChild(b));
-    // Insert after pPr
-    const pPr = getChildW(el, 'pPr');
-    const bkStart = wEl(doc, 'bookmarkStart');
-    bkStart.setAttributeNS(W_NS, 'w:id', String(bkId));
-    bkStart.setAttributeNS(W_NS, 'w:name', item.anchor);
-    const bkEnd = wEl(doc, 'bookmarkEnd');
-    bkEnd.setAttributeNS(W_NS, 'w:id', String(bkId));
-    bkId++;
-    if (pPr && pPr.nextSibling) {
-      el.insertBefore(bkStart, pPr.nextSibling);
-      el.insertBefore(bkEnd, bkStart.nextSibling);
-    } else {
-      el.appendChild(bkStart); el.appendChild(bkEnd);
-    }
+    });
   });
 }
 
-function makeHyperlink(doc, anchor) {
-  const hl = wEl(doc, 'hyperlink');
-  hl.setAttributeNS(W_NS, 'w:anchor', anchor);
-  hl.setAttributeNS(W_NS, 'w:history', '1');
-  return hl;
-}
+// ── Cover blank line insertion ────────────────────────────────
 
-function makePageRefRuns(doc, anchor, pageText) {
-  return [
-    makeRun(doc, { noProof: true, webHidden: true, tab: true }),
-    makeRun(doc, { noProof: true, webHidden: true, fldChar: 'begin' }),
-    makeRun(doc, { noProof: true, webHidden: true, instrText: ` PAGEREF ${anchor} \\h ` }),
-    (() => { const r = wEl(doc, 'r'); r.appendChild(wEl(doc, 'rPr')); return r; })(),
-    makeRun(doc, { noProof: true, webHidden: true, fldChar: 'separate' }),
-    makeRun(doc, { noProof: true, webHidden: true, text: String(pageText) }),
-    makeRun(doc, { noProof: true, webHidden: true, fldChar: 'end' }),
+function insertCoverBlanks(doc, body) {
+  const children = bodyChildren(body);
+  const coverParas = [];
+  for (const el of children) {
+    if (el.localName === 'p' && el.namespaceURI === W) {
+      const s = getStyle(el);
+      if (s === '1' || s === '2') break;
+      coverParas.push(el);
+    }
+  }
+
+  const textParas = coverParas
+    .map(el => ({ el, text: getText(el) }))
+    .filter(({ text }) => text.length > 0);
+
+  const RULES = [
+    [t => t.startsWith('寵物餐食'), 1],
+    [t => t.includes('精算報告') || t.includes('Part'), 2],
+    [t => t.includes('Development Project'), 2],
+    [t => t.includes('已絕育成年犬消化之原型食材模組研發'), 1],
+    [t => t.includes('Effects of Whole') || t.includes('Neutered'), 3],
+    [t => t.startsWith('目標對象'), 3],
+    [t => t.includes('Ph.D.') && t.includes('（'), 3],
+    [t => (t.includes('年') && t.includes('月') && t.includes('民國')) || (t.includes('年') && t.includes('月') && t.length < 15), 1],
   ];
-}
 
-function buildTOCHeading(doc, anchor, bookmarkAnchor) {
-  // 「目錄」heading para (style=1)
-  const p = wEl(doc, 'p');
-  const pPr = wEl(doc, 'pPr'); p.appendChild(pPr);
-  const ps = wEl(doc, 'pStyle'); ps.setAttributeNS(W_NS, 'w:val', '1'); pPr.appendChild(ps);
-  const sp = wEl(doc, 'spacing');
-  sp.setAttributeNS(W_NS, 'w:before', '0'); sp.setAttributeNS(W_NS, 'w:after', '0');
-  sp.setAttributeNS(W_NS, 'w:line', '480'); sp.setAttributeNS(W_NS, 'w:lineRule', 'auto');
-  pPr.appendChild(sp);
-  const ind = wEl(doc, 'ind'); ind.setAttributeNS(W_NS, 'w:firstLine', '0'); pPr.appendChild(ind);
-  const pRPr = wEl(doc, 'rPr'); pPr.appendChild(pRPr);
-  pRPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-  pRPr.appendChild(makeSz(doc, '28')); pRPr.appendChild(makeSzCs(doc, '24'));
-
-  // bookmark
-  const bkS = wEl(doc, 'bookmarkStart'); bkS.setAttributeNS(W_NS, 'w:id', '2'); bkS.setAttributeNS(W_NS, 'w:name', bookmarkAnchor); p.appendChild(bkS);
-  // run
-  const r = makeRun(doc, { ascii: 'Times New Roman', color: '000000', themeColor: 'text1', sz: '28', szCs: '24', text: '目錄' }); p.appendChild(r);
-  const bkE = wEl(doc, 'bookmarkEnd'); bkE.setAttributeNS(W_NS, 'w:id', '2'); p.appendChild(bkE);
-  return p;
-}
-
-function buildPageNumberRow(doc) {
-  const p = wEl(doc, 'p');
-  const pPr = wEl(doc, 'pPr'); p.appendChild(pPr);
-  const ind = wEl(doc, 'ind'); ind.setAttributeNS(W_NS, 'w:firstLine', '0'); pPr.appendChild(ind);
-  const jc = wEl(doc, 'jc'); jc.setAttributeNS(W_NS, 'w:val', 'right'); pPr.appendChild(jc);
-  const pRPr = wEl(doc, 'rPr'); pPr.appendChild(pRPr);
-  pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-  const r1 = makeRun(doc, { color: '000000', themeColor: 'text1', text: ' '.repeat(65) }); p.appendChild(r1);
-  const r2 = makeRun(doc, { color: '000000', themeColor: 'text1', text: '頁數' }); p.appendChild(r2);
-  return p;
-}
-
-function buildTOC11Para(doc, anchor, titleText, pageText, isFirst) {
-  const p = wEl(doc, 'p');
-  const pPr = wEl(doc, 'pPr'); p.appendChild(pPr);
-  const ps = wEl(doc, 'pStyle'); ps.setAttributeNS(W_NS, 'w:val', '11'); pPr.appendChild(ps);
-  const pRPr = wEl(doc, 'rPr'); pPr.appendChild(pRPr);
-  const rFt = makeRFonts(doc); // theme fonts
-  rFt.setAttributeNS(W_NS, 'w:asciiTheme', 'minorHAnsi'); rFt.setAttributeNS(W_NS, 'w:eastAsiaTheme', 'minorEastAsia');
-  rFt.setAttributeNS(W_NS, 'w:hAnsiTheme', 'minorHAnsi'); rFt.setAttributeNS(W_NS, 'w:cstheme', 'minorBidi');
-  pRPr.appendChild(rFt); pRPr.appendChild(wEl(doc, 'noProof'));
-  pRPr.appendChild(makeColor(doc, 'auto')); pRPr.appendChild(makeSz(doc, '24')); pRPr.appendChild(makeSzCs(doc, '22'));
-
-  // TOC field begin on first item
-  if (isFirst) {
-    const makeFieldRun = (txt) => {
-      const r = wEl(doc, 'r'); const rPr = wEl(doc, 'rPr'); r.appendChild(rPr);
-      rPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman', null, 'Times New Roman'));
-      rPr.appendChild(wEl(doc, 'b'));
-      rPr.appendChild(makeColor(doc, '000000', 'text1'));
-      rPr.appendChild(makeSz(doc, '24')); rPr.appendChild(makeSzCs(doc, '24'));
-      if (txt.type === 'begin') { const fc = wEl(doc, 'fldChar'); fc.setAttributeNS(W_NS, 'w:fldCharType', 'begin'); r.appendChild(fc); }
-      else if (txt.type === 'sep') { const fc = wEl(doc, 'fldChar'); fc.setAttributeNS(W_NS, 'w:fldCharType', 'separate'); r.appendChild(fc); }
-      else { const it = wEl(doc, 'instrText'); xmlSet(it, 'space', 'preserve'); it.textContent = txt.text; r.appendChild(it); }
-      return r;
-    };
-    p.appendChild(makeFieldRun({ type: 'begin' }));
-    p.appendChild(makeFieldRun({ text: ' TOC \\o "1-3" \\h \\z \\u ' }));
-    p.appendChild(makeFieldRun({ type: 'sep' }));
+  const insertions = [];
+  for (const [fn, count] of RULES) {
+    for (const { el, text } of textParas) {
+      if (fn(text)) { insertions.push({ el, count }); break; }
+    }
   }
 
-  // Hyperlink with title text
-  const hl = makeHyperlink(doc, anchor);
-  // 保留原始標題文字（含全形空格\u3000），按空白分割
-  const parts = titleText.split(/([\s\u3000]+)/);
-  parts.forEach(part => {
-    if (!part) return;
-    const r = wEl(doc, 'r'); const rPr = wEl(doc, 'rPr'); r.appendChild(rPr);
-    const rs = wEl(doc, 'rStyle'); rs.setAttributeNS(W_NS, 'w:val', 'ae'); rPr.appendChild(rs);
-    const rF = makeRFonts(doc, 'Times New Roman', 'Times New Roman');
-    if (/[\u4e00-\u9fff\u3000]/.test(part)) rF.setAttributeNS(W_NS, 'w:hint', 'eastAsia');
-    rPr.appendChild(rF); rPr.appendChild(wEl(doc, 'noProof'));
-    r.appendChild(makeT(doc, part)); hl.appendChild(r);
-  });
-  makePageRefRuns(doc, anchor, pageText).forEach(r => hl.appendChild(r));
-  p.appendChild(hl);
-  return p;
-}
-
-function buildTOC21Para(doc, anchor, sectionNum, titleText, pageText) {
-  const p = wEl(doc, 'p');
-  const pPr = wEl(doc, 'pPr'); p.appendChild(pPr);
-  const ps = wEl(doc, 'pStyle'); ps.setAttributeNS(W_NS, 'w:val', '21'); pPr.appendChild(ps);
-  const tabs = wEl(doc, 'tabs'); const tab = wEl(doc, 'tab');
-  tab.setAttributeNS(W_NS, 'w:val', 'left'); tab.setAttributeNS(W_NS, 'w:pos', '1985');
-  tabs.appendChild(tab); pPr.appendChild(tabs);
-  const pRPr = wEl(doc, 'rPr'); pPr.appendChild(pRPr);
-  const rFt = wEl(doc, 'rFonts');
-  rFt.setAttributeNS(W_NS, 'w:asciiTheme', 'minorHAnsi'); rFt.setAttributeNS(W_NS, 'w:eastAsiaTheme', 'minorEastAsia');
-  rFt.setAttributeNS(W_NS, 'w:hAnsiTheme', 'minorHAnsi'); rFt.setAttributeNS(W_NS, 'w:cstheme', 'minorBidi');
-  pRPr.appendChild(rFt); pRPr.appendChild(wEl(doc, 'noProof'));
-  pRPr.appendChild(makeColor(doc, 'auto')); pRPr.appendChild(makeSz(doc, '24')); pRPr.appendChild(makeSzCs(doc, '22'));
-
-  const hl = makeHyperlink(doc, anchor);
-
-  // Section number run (e.g. "第一節")
-  const rNum = wEl(doc, 'r'); const rPrN = wEl(doc, 'rPr'); rNum.appendChild(rPrN);
-  const rsN = wEl(doc, 'rStyle'); rsN.setAttributeNS(W_NS, 'w:val', 'ae'); rPrN.appendChild(rsN);
-  rPrN.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman', null, null, 'eastAsia'));
-  rPrN.appendChild(wEl(doc, 'noProof')); rNum.appendChild(makeT(doc, sectionNum)); hl.appendChild(rNum);
-
-  // Tab between number and title
-  const rTab = wEl(doc, 'r'); const rPrTab = wEl(doc, 'rPr'); rTab.appendChild(rPrTab);
-  const rFTab = wEl(doc, 'rFonts');
-  rFTab.setAttributeNS(W_NS, 'w:asciiTheme', 'minorHAnsi'); rFTab.setAttributeNS(W_NS, 'w:hAnsiTheme', 'minorHAnsi');
-  rFTab.setAttributeNS(W_NS, 'w:eastAsiaTheme', 'minorEastAsia'); rFTab.setAttributeNS(W_NS, 'w:cstheme', 'minorBidi');
-  rPrTab.appendChild(rFTab); rPrTab.appendChild(wEl(doc, 'noProof'));
-  rPrTab.appendChild(makeColor(doc, 'auto')); rPrTab.appendChild(makeSz(doc, '24')); rPrTab.appendChild(makeSzCs(doc, '22'));
-  rTab.appendChild(wEl(doc, 'tab')); hl.appendChild(rTab);
-
-  // Title run
-  if (titleText) {
-    const rTitle = wEl(doc, 'r'); const rPrT = wEl(doc, 'rPr'); rTitle.appendChild(rPrT);
-    const rsT = wEl(doc, 'rStyle'); rsT.setAttributeNS(W_NS, 'w:val', 'ae'); rPrT.appendChild(rsT);
-    rPrT.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman', null, null, 'eastAsia'));
-    rPrT.appendChild(wEl(doc, 'noProof')); rTitle.appendChild(makeT(doc, titleText)); hl.appendChild(rTitle);
+  // De-dup and process from bottom to top
+  const seen = new Set();
+  const unique = [];
+  for (const ins of [...insertions].sort((a, b) => {
+    const ai = Array.from(body.childNodes).indexOf(a.el);
+    const bi = Array.from(body.childNodes).indexOf(b.el);
+    return bi - ai;
+  })) {
+    if (!seen.has(ins.el)) { unique.push(ins); seen.add(ins.el); }
   }
 
-  makePageRefRuns(doc, anchor, pageText).forEach(r => hl.appendChild(r));
-  p.appendChild(hl);
-  return p;
-}
-
-function buildTableListHeading(doc, bookmarkAnchor) {
-  // 表目次 heading para (style=1 with page break)
-  const p = wEl(doc, 'p');
-  const pPr = wEl(doc, 'pPr'); p.appendChild(pPr);
-  const ps = wEl(doc, 'pStyle'); ps.setAttributeNS(W_NS, 'w:val', '1'); pPr.appendChild(ps);
-  const sp = wEl(doc, 'spacing');
-  sp.setAttributeNS(W_NS, 'w:before', '0'); sp.setAttributeNS(W_NS, 'w:after', '0');
-  sp.setAttributeNS(W_NS, 'w:line', '240'); sp.setAttributeNS(W_NS, 'w:lineRule', 'auto');
-  pPr.appendChild(sp);
-  const ind = wEl(doc, 'ind'); ind.setAttributeNS(W_NS, 'w:firstLine', '0'); pPr.appendChild(ind);
-  const pRPr = wEl(doc, 'rPr'); pPr.appendChild(pRPr);
-  pRPr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-  pRPr.appendChild(makeSz(doc, '28')); pRPr.appendChild(makeSzCs(doc, '28'));
-
-  // TOC field end (close chapter TOC)
-  const rEnd = wEl(doc, 'r'); const rPrEnd = wEl(doc, 'rPr'); rEnd.appendChild(rPrEnd);
-  rPrEnd.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  rPrEnd.appendChild(makeColor(doc, '000000', 'text1'));
-  const fcEnd = wEl(doc, 'fldChar'); fcEnd.setAttributeNS(W_NS, 'w:fldCharType', 'end'); rEnd.appendChild(fcEnd);
-  p.appendChild(rEnd);
-
-  // Page break
-  const rBr = wEl(doc, 'r'); const rPrBr = wEl(doc, 'rPr'); rBr.appendChild(rPrBr);
-  rPrBr.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  rPrBr.appendChild(makeColor(doc, '000000', 'text1'));
-  const br = wEl(doc, 'br'); br.setAttributeNS(W_NS, 'w:type', 'page'); rBr.appendChild(br);
-  p.appendChild(rBr);
-
-  // Bookmark + 表目次 text
-  const bkS = wEl(doc, 'bookmarkStart'); bkS.setAttributeNS(W_NS, 'w:id', '99'); bkS.setAttributeNS(W_NS, 'w:name', bookmarkAnchor); p.appendChild(bkS);
-  const rText = wEl(doc, 'r'); const rPrTxt = wEl(doc, 'rPr'); rText.appendChild(rPrTxt);
-  rPrTxt.appendChild(makeRFonts(doc, 'Times New Roman', 'Times New Roman'));
-  rPrTxt.appendChild(makeColor(doc, '000000', 'text1'));
-  rPrTxt.appendChild(makeSz(doc, '28')); rPrTxt.appendChild(makeSzCs(doc, '28'));
-  rText.appendChild(makeT(doc, '表目次')); p.appendChild(rText);
-  const bkE = wEl(doc, 'bookmarkEnd'); bkE.setAttributeNS(W_NS, 'w:id', '99'); p.appendChild(bkE);
-  return p;
-}
-
-function buildTOCAF0Para(doc, anchor, tableTitle, pageText, isFirst) {
-  const p = wEl(doc, 'p');
-  const pPr = wEl(doc, 'pPr'); p.appendChild(pPr);
-  const ps = wEl(doc, 'pStyle'); ps.setAttributeNS(W_NS, 'w:val', 'af0'); pPr.appendChild(ps);
-  const pRPr = wEl(doc, 'rPr'); pPr.appendChild(pRPr);
-  const rFt = wEl(doc, 'rFonts');
-  rFt.setAttributeNS(W_NS, 'w:asciiTheme', 'minorHAnsi'); rFt.setAttributeNS(W_NS, 'w:hAnsiTheme', 'minorHAnsi');
-  rFt.setAttributeNS(W_NS, 'w:eastAsiaTheme', 'minorEastAsia'); rFt.setAttributeNS(W_NS, 'w:cstheme', 'minorBidi');
-  pRPr.appendChild(rFt); pRPr.appendChild(wEl(doc, 'noProof'));
-  pRPr.appendChild(makeColor(doc, 'auto')); pRPr.appendChild(makeSz(doc, '24')); pRPr.appendChild(makeSzCs(doc, '22'));
-
-  if (isFirst) {
-    const mkCR = (type, text) => {
-      const r = wEl(doc, 'r'); const rPr = wEl(doc, 'rPr'); r.appendChild(rPr);
-      rPr.appendChild(makeColor(doc, '000000', 'text1'));
-      if (type === 'begin') { const fc = wEl(doc, 'fldChar'); fc.setAttributeNS(W_NS, 'w:fldCharType', 'begin'); r.appendChild(fc); }
-      else if (type === 'sep') { const fc = wEl(doc, 'fldChar'); fc.setAttributeNS(W_NS, 'w:fldCharType', 'separate'); r.appendChild(fc); }
-      else { const it = wEl(doc, 'instrText'); xmlSet(it, 'space', 'preserve'); it.textContent = text; r.appendChild(it); }
-      return r;
-    };
-    p.appendChild(mkCR('begin'));
-    p.appendChild(mkCR('instr', ' TOC \\h \\z \\c "'));
-    p.appendChild(mkCR('instr', '表'));
-    p.appendChild(mkCR('instr', '" '));
-    p.appendChild(mkCR('sep'));
+  for (const { el, count } of unique) {
+    for (let i = 0; i < count; i++) {
+      insertAfter(body, makeEmptyCoverPara(doc), el);
+    }
   }
-
-  const hl = makeHyperlink(doc, anchor);
-  // Split table title into parts for proper hint marking
-  tableTitle.split(/(\d+)/).forEach(part => {
-    if (!part) return;
-    const r = wEl(doc, 'r'); const rPr = wEl(doc, 'rPr'); r.appendChild(rPr);
-    const rs = wEl(doc, 'rStyle'); rs.setAttributeNS(W_NS, 'w:val', 'ae'); rPr.appendChild(rs);
-    const rF = wEl(doc, 'rFonts');
-    if (!/^\d+$/.test(part)) rF.setAttributeNS(W_NS, 'w:hint', 'eastAsia');
-    rPr.appendChild(rF); rPr.appendChild(wEl(doc, 'noProof'));
-    r.appendChild(makeT(doc, part)); hl.appendChild(r);
-  });
-  makePageRefRuns(doc, anchor, pageText).forEach(r => hl.appendChild(r));
-  p.appendChild(hl);
-
-  // Close table TOC field on last item
-  return p;
 }
 
-function parseH2Text(text) {
-  // "第一節　報告說明" -> ["第一節", "報告說明"]
-  const m = text.match(/^(第[一二三四五六七八九十百]+節|[一二三四五六七八九十]+、|[一二三四五六七八九十]+\.)\s*[\u3000\s]*(.*)/);
-  if (m) return [m[1], m[2].trim()];
-  const parts = text.split('\u3000');
-  if (parts.length >= 2) return [parts[0].trim(), parts.slice(1).join('\u3000').trim()];
-  return [text, ''];
-}
+// ── Table 2 column width fix ──────────────────────────────────
 
-function rebuildTOC(body, headings, tables) {
-  const doc = body.ownerDocument;
-  const children = [...body.childNodes].filter(n => n.nodeType === 1);
-
-  // Find TOC area: from paragraph with text='目錄' to first H1 with '第X章'
-  let tocHeadingEl = null, tocHeadingIdx = -1;
-  let tocEndEl = null, tocEndIdx = -1;
-
-  children.forEach((el, i) => {
-    if (el.localName === 'p' && el.namespaceURI === W_NS) {
-      const text = getText(el);
-      if (text === '目錄' && tocHeadingEl === null) { tocHeadingEl = el; tocHeadingIdx = i; }
-      if (tocHeadingEl && tocEndEl === null && getStyle(el) === '1' && text.includes('第') && text.includes('章')) {
-        tocEndEl = el; tocEndIdx = i;
+function fixTable2Widths(doc, body) {
+  const tables = findAll(body, 'tbl');
+  if (tables.length < 2) return;
+  const tbl2 = tables[1];
+  const tblGrid = findChild(tbl2, 'tblGrid');
+  if (tblGrid) {
+    const cols = findAll(tblGrid, 'gridCol');
+    if (cols.length === 3) { wAttr(cols[1], 'w', '900'); wAttr(cols[2], 'w', '1500'); }
+  }
+  for (const row of findAll(tbl2, 'tr')) {
+    const cells = findAll(row, 'tc');
+    if (cells.length === 3) {
+      for (const [idx, newW] of [[1, '900'], [2, '1500']]) {
+        const tcPr = findChild(cells[idx], 'tcPr');
+        if (tcPr) { const tcW = findChild(tcPr, 'tcW'); if (tcW) wAttr(tcW, 'w', newW); }
       }
     }
-  });
-
-  if (tocHeadingIdx < 0) {
-    console.warn('TOC heading not found, inserting before first H1 chapter');
-    // Find insertion point: before first H1 with 章
-    const firstChapter = children.find(el => el.localName === 'p' && getStyle(el) === '1' && getText(el).includes('章'));
-    if (!firstChapter) return;
-    tocEndEl = firstChapter;
-    tocEndIdx = children.indexOf(firstChapter);
-    // No TOC paragraphs to remove
-    tocHeadingIdx = tocEndIdx;
-    tocHeadingEl = null;
   }
+}
 
-  // Remove old TOC paragraphs (between tocHeadingIdx and tocEndIdx exclusive)
-  const toRemove = [];
-  if (tocHeadingEl) toRemove.push(tocHeadingEl);
-  for (let i = tocHeadingIdx + 1; i < tocEndIdx; i++) toRemove.push(children[i]);
-  toRemove.forEach(el => { if (el.parentNode === body) body.removeChild(el); });
+// ── Table title normalization ─────────────────────────────────
 
-  // Build new TOC paragraphs
-  const newParas = [];
+const TABLE_TITLE_MAP = {
+  '表 1、FMLA-N-D10-08 單餐食材組成與巨量營養素': '表1、單餐食材組成與巨量營養素',
+  '表 2、10 kg 已絕育成年犬能量需求計算': '表2、10 kg 已絕育成年犬能量需求計算',
+  '表 3、FMLA-N-D10-08 AAFCO 成年犬維持期營養素全項對照表（DM 基準，AAFCO最低值已套用PF9校正係數 ×1.032201）': '表3、成年犬維持期營養素全項對照表',
+  '表 4、FMLA-N-D10-08 AAFCO 合規統計摘要': '表4、合規統計摘要',
+  '表 5、FMLA-N-D10-08 補充劑處方——每餐及每日精確劑量': '表5、補充劑處方——每餐及每日精確劑量',
+};
 
-  // 目錄 heading
-  newParas.push(buildTOCHeading(doc, null, '_TocDir'));
-  // 頁數 row
-  newParas.push(buildPageNumberRow(doc));
-
-  // Chapter and section entries
-  let isFirst11 = true;
-  headings.forEach(h => {
-    if (h.level === 1) {
-      // Parse: "第一章　研究背景與分析範疇" -> title
-      const m = h.text.match(/^(第[一二三四五六七八九十百]+章)\s*[\u3000\s]*(.*)/);
-      const displayText = m ? m[1] + ' ' + m[2].trim() : h.text;
-      newParas.push(buildTOC11Para(doc, h.anchor, displayText, '1', isFirst11));
-      isFirst11 = false;
-    } else {
-      const [secNum, title] = parseH2Text(h.text);
-      newParas.push(buildTOC21Para(doc, h.anchor, secNum, title, '1'));
+function normalizeTableTitles(doc, body) {
+  for (const el of findAll(body, 'p')) {
+    const paraText = getText(el);
+    for (const [oldT, newT] of Object.entries(TABLE_TITLE_MAP)) {
+      if (paraText.includes(oldT)) {
+        for (const run of directRuns(el)) {
+          const t = findChild(run, 't');
+          if (t && t.textContent && t.textContent.includes(oldT)) {
+            t.textContent = t.textContent.replace(oldT, newT);
+            t.removeAttributeNS(XML_SPACE, 'space');
+          }
+        }
+        break;
+      }
     }
-  });
-
-  // 表目次
-  newParas.push(buildTableListHeading(doc, '_TocTbl'));
-  tables.forEach((t, i) => {
-    const af0 = buildTOCAF0Para(doc, t.anchor, t.title, '1', i === 0);
-    newParas.push(af0);
-  });
-  // Close table TOC field
-  if (tables.length > 0) {
-    const lastAF = newParas[newParas.length - 1];
-    const rClose = wEl(doc, 'r'); const rPrC = wEl(doc, 'rPr'); rClose.appendChild(rPrC);
-    rPrC.appendChild(makeColor(doc, '000000', 'text1'));
-    const fcClose = wEl(doc, 'fldChar'); fcClose.setAttributeNS(W_NS, 'w:fldCharType', 'end'); rClose.appendChild(fcClose);
-    lastAF.appendChild(rClose);
   }
-
-  // Insert before tocEndEl
-  newParas.forEach(p => body.insertBefore(p, tocEndEl));
 }
 
-// ── sectPr ──────────────────────────────────────────────────────
-function buildCoverSectPr(doc, footerRid) {
-  const sp = wEl(doc, 'sectPr');
-  if (footerRid) {
-    const fr = wEl(doc, 'footerReference'); wSet(fr, 'type', 'default'); rSet(fr, 'id', footerRid); sp.appendChild(fr);
-  }
-  const pgSz = wEl(doc, 'pgSz'); wSet(pgSz,'w','11906'); wSet(pgSz,'h','16838'); sp.appendChild(pgSz);
-  const pgMar = wEl(doc, 'pgMar');
-  wSet(pgMar,'top','1418'); wSet(pgMar,'right','1418'); wSet(pgMar,'bottom','1418'); wSet(pgMar,'left','1701');
-  wSet(pgMar,'header','851'); wSet(pgMar,'footer','992'); wSet(pgMar,'gutter','0'); sp.appendChild(pgMar);
-  const pgNum = wEl(doc, 'pgNumType'); wSet(pgNum,'fmt','upperRoman'); wSet(pgNum,'start','1'); sp.appendChild(pgNum);
-  const cols = wEl(doc, 'cols'); wSet(cols,'space','425'); sp.appendChild(cols);
-  const dg = wEl(doc, 'docGrid'); wSet(dg,'type','lines'); wSet(dg,'linePitch','360'); sp.appendChild(dg);
-  return sp;
-}
+// ── Disclaimer / copyright special formatting ─────────────────
 
-function updateMainSectPr(sectPr) {
-  clearEl(sectPr);
-  const doc = sectPr.ownerDocument;
-  const pgSz = wEl(doc, 'pgSz'); wSet(pgSz,'w','11906'); wSet(pgSz,'h','16838'); sectPr.appendChild(pgSz);
-  const pgMar = wEl(doc, 'pgMar');
-  wSet(pgMar,'top','1440'); wSet(pgMar,'right','1797'); wSet(pgMar,'bottom','1440'); wSet(pgMar,'left','1797');
-  wSet(pgMar,'header','851'); wSet(pgMar,'footer','992'); wSet(pgMar,'gutter','0'); sectPr.appendChild(pgMar);
-  const pgNum = wEl(doc, 'pgNumType'); wSet(pgNum,'start','1'); sectPr.appendChild(pgNum);
-  const cols = wEl(doc, 'cols'); wSet(cols,'space','720'); sectPr.appendChild(cols);
-  const dg = wEl(doc, 'docGrid'); wSet(dg,'type','lines'); wSet(dg,'linePitch','360'); sectPr.appendChild(dg);
-}
+function applySpecialBodyFormatting(doc, body) {
+  let disclaimerBodyIdx = -1;
+  const children = bodyChildren(body);
 
-const FOOTER_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE \\* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>`;
-
-// ═══════════════════════════════════════════════════════════════
-// 主轉換函式
-// ═══════════════════════════════════════════════════════════════
-async function convertDocx(file, onLog) {
-  onLog('讀取 DOCX...');
-  const ab = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(ab);
-
-  onLog('解析文件結構...');
-  const docXml = await zip.file('word/document.xml').async('string');
-  const doc = parseXML(docXml);
-  const body = doc.getElementsByTagNameNS(W_NS, 'body')[0];
-  const children = [...body.childNodes].filter(n => n.nodeType === 1);
-
-  // ── Phase 1: 格式化段落和表格 ──────────────────────────────
-  onLog('套用段落格式...');
-  let paraIdx = 0;
-  const stats = { cover:0, h1:0, h2:0, body:0, empty:0, table:0 };
-
-  children.forEach(el => {
-    if (el.localName === 'p' && el.namespaceURI === W_NS) {
-      const style = getStyle(el);
-      const text = getText(el);
-      if (!text) { applyEmpty(el); stats.empty++; }
-      else if (style === '1' || style === 'Heading1' || style === 'Heading 1') { applyH1(el); stats.h1++; }
-      else if (style === '2' || style === 'Heading2' || style === 'Heading 2' || style === '3') { applyH2(el); stats.h2++; }
-      else if (paraIdx < 17) { applyBody(el); stats.cover++; }  // Will override with cover below
-      else { applyBody(el); stats.body++; }
-      paraIdx++;
-    } else if (el.localName === 'tbl' && el.namespaceURI === W_NS) {
-      applyTable(el); stats.table++;
-    } else if (el.localName === 'sectPr' && el.namespaceURI === W_NS) {
-      updateMainSectPr(el);
-    }
-  });
-
-  // ── Apply cover format SEPARATELY (needs all-runs approach) ──
-  onLog('套用封面格式...');
-  const childrenNow = [...body.childNodes].filter(n => n.nodeType === 1);
-  let coverCount = 0;
-  for (const el of childrenNow) {
-    if (el.localName !== 'p' || el.namespaceURI !== W_NS) continue;
-    const style = getStyle(el);
+  children.forEach((el, i) => {
+    if (el.localName !== 'p') return;
     const text = getText(el);
-    if (style === '1' || style === '2') break; // Past cover section
-    if (coverCount >= 17) break;
-    if (text) { applyBody(el); } // First apply body to reset
-    applyBody(el);
-    coverCount++;
+    if (text.includes('聲明事項') && text.includes('Disclaimer')) {
+      const pPr = ensurePPr(doc, el);
+      wAttr(goc(doc, pPr, 'jc'), 'val', 'left');
+      wAttr(goc(doc, pPr, 'ind'), 'firstLine', '0');
+      for (const run of directRuns(el)) {
+        const rPr = ensureRPr(doc, run);
+        if (!findChild(rPr, 'b')) rPr.appendChild(wElem(doc, 'b'));
+      }
+    } else if (text.includes('本報告採用食材平均組成值')) {
+      for (const run of directRuns(el)) {
+        const rPr = ensureRPr(doc, run);
+        if (!findChild(rPr, 'i')) rPr.appendChild(wElem(doc, 'i'));
+      }
+      disclaimerBodyIdx = i;
+    }
+  });
+
+  // Insert copyright paragraph after disclaimer body
+  if (disclaimerBodyIdx >= 0) {
+    const refEl = children[disclaimerBodyIdx];
+    const cp = wElem(doc, 'p');
+    const cpPr = wElem(doc, 'pPr'); cp.appendChild(cpPr);
+    const sp = wElem(doc, 'spacing'); wAttr(sp, 'before', '80'); wAttr(sp, 'after', '80'); cpPr.appendChild(sp);
+    const jc = wElem(doc, 'jc'); wAttr(jc, 'val', 'both'); cpPr.appendChild(jc);
+    const ind = wElem(doc, 'ind'); wAttr(ind, 'firstLine', '480'); cpPr.appendChild(ind);
+    const pPrRpr = wElem(doc, 'rPr'); const cA = wElem(doc, 'color'); wAttr(cA, 'val', 'auto'); pPrRpr.appendChild(cA); cpPr.appendChild(pPrRpr);
+    const cpR = wElem(doc, 'r'); cp.appendChild(cpR);
+    const cpRpr = wElem(doc, 'rPr'); cpR.appendChild(cpRpr);
+    cpRpr.appendChild(wElem(doc, 'b'));
+    const cRed = wElem(doc, 'color'); wAttr(cRed, 'val', 'FF0000'); cpRpr.appendChild(cRed);
+    const cpT = wElem(doc, 't');
+    cpT.setAttributeNS(XML_SPACE, 'xml:space', 'preserve');
+    cpT.textContent = '© 2026 Yi-Cheng Hou, Ph.D. All Rights Reserved. 未經書面授權，不得重製、轉載或轉讓。';
+    cpR.appendChild(cpT);
+    insertAfter(body, cp, refEl);
   }
-  // NOW apply cover with proper sz/bold fix
-  coverCount = 0;
-  for (const el of childrenNow) {
-    if (el.localName !== 'p' || el.namespaceURI !== W_NS) { if (el.localName === 'tbl') break; continue; }
-    const style = getStyle(el);
-    if (style === '1' || style === '2') break;
-    if (coverCount >= 17) break;
-    applyBody(el); // reset spacing/indent
-    // Override: cover-specific pPr
-    const pPr = ensurePPr(el);
-    rm(pPr, 'pStyle');
-    const sp = goc(pPr, 'spacing'); wSet(sp,'line','400'); wSet(sp,'lineRule','exact'); rmAttr(sp,'before'); rmAttr(sp,'after');
-    const ind = goc(pPr, 'ind'); wSet(ind,'firstLine','0');
-    const jc = goc(pPr, 'jc'); wSet(jc,'val','center');
-    const pRPr = goc(pPr, 'rPr'); clearEl(pRPr); pRPr.appendChild(makeColor(doc, '000000', 'text1'));
-    // Fix ALL runs (including in hyperlinks) - sz=28, szCs=28, no bold
-    const allRuns = [...el.getElementsByTagNameNS(W_NS, 'r')];
-    allRuns.forEach(run => {
-      const rPr = ensureRPr(run); clearEl(rPr);
-      rPr.appendChild(makeColor(doc, '000000', 'text1'));
-      rPr.appendChild(makeSz(doc, '28')); rPr.appendChild(makeSzCs(doc, '28'));
-    });
-    coverCount++;
+}
+
+// ── Simplified TOC rebuild (update existing entries) ──────────
+
+function rebuildTOC(doc, body) {
+  // Instead of full TOC rebuild, update the table-of-figures entries to use short titles
+  // Full heading TOC is preserved from source (bookmarks and PAGEREF fields are kept)
+  const allText = Array.from(body.getElementsByTagNameNS(W, 't'));
+  const tocTitleMap = {
+    'FMLA-N-D10-08 單餐食材組成與巨量營養素': '單餐食材組成與巨量營養素',
+    'FMLA-N-D10-08 AAFCO 成年犬維持期營養素全項對照表（DM 基準，AAFCO最低值已套用PF9校正係數 ×1.032201）': '成年犬維持期營養素全項對照表',
+    'FMLA-N-D10-08 AAFCO 合規統計摘要': '合規統計摘要',
+    'FMLA-N-D10-08 補充劑處方——每餐及每日精確劑量': '補充劑處方——每餐及每日精確劑量',
+    // Handle split runs — partial matches
+    '、FMLA-N-D': '、',
+    ' AAFCO 成年犬維持期營養素全項對照表（DM 基準，AAFCO最低值已套用PF': ' 成年犬維持期營養素全項對照表',
+    ' AAFCO 合規統計摘要': ' 合規統計摘要',
+    ' 補充劑處方——每餐及每日精確劑量': ' 補充劑處方——每餐及每日精確劑量',
+    ' 單餐食材組成與巨量營養素': ' 單餐食材組成與巨量營養素',
+  };
+
+  // For runs that contain numbers like "10", "-", "08" after FMLA-N-D, we need to
+  // track and eliminate them. Use a state machine approach on consecutive runs in hyperlinks.
+  const hyperlinks = Array.from(body.getElementsByTagNameNS(W, 'hyperlink'));
+  for (const hlink of hyperlinks) {
+    const runs = findAll(hlink, 'r');
+    // Detect if this hyperlink is a table TOC entry (contains 表 and digits)
+    const hlinkText = getText(hlink);
+    if (!hlinkText.match(/^表\s*\d/) && !hlinkText.includes('表1') && !hlinkText.includes('表2')
+        && !hlinkText.includes('表3') && !hlinkText.includes('表4') && !hlinkText.includes('表5')) continue;
+
+    // Rebuild the title part: find all text runs before the tab/PAGEREF
+    const titleRuns = [];
+    let foundPageRef = false;
+    for (const run of runs) {
+      if (findChild(run, 'tab') || findChild(run, 'fldChar') || findChild(run, 'instrText')) { foundPageRef = true; break; }
+      titleRuns.push(run);
+    }
+    if (titleRuns.length === 0 || foundPageRef === false) continue;
+
+    // Reconstruct short title
+    const fullText = titleRuns.map(r => { const t = findChild(r, 't'); return t ? t.textContent : ''; }).join('');
+    let shortText = fullText;
+    // Map long → short
+    shortText = shortText.replace(/表\s*(\d)、FMLA-N-D10-08\s*(AAFCO\s*)?成年犬維持期營養素全項對照表.*/, '表$1、成年犬維持期營養素全項對照表');
+    shortText = shortText.replace(/表\s*(\d)、FMLA-N-D10-08\s*(AAFCO\s*)?合規統計摘要/, '表$1、合規統計摘要');
+    shortText = shortText.replace(/表\s*(\d)、FMLA-N-D10-08\s*補充劑處方/, '表$1、補充劑處方');
+    shortText = shortText.replace(/表\s*(\d)、FMLA-N-D10-08\s*單餐食材組成/, '表$1、單餐食材組成');
+    shortText = shortText.replace(/表\s*(\d)、(\d+\s*kg)/, '表$1、$2');
+    shortText = shortText.replace(/表\s+(\d)、/, '表$1、');
+
+    if (shortText === fullText) continue;
+
+    // Replace all title runs with a single run containing the short text
+    const firstRun = titleRuns[0];
+    const rPr = findChild(firstRun, 'rPr');
+    const newT = findChild(firstRun, 't') || wElem(doc, 't');
+    newT.textContent = shortText;
+    newT.removeAttributeNS(XML_SPACE, 'space');
+    if (!findChild(firstRun, 't')) firstRun.appendChild(newT);
+    // Remove the remaining title runs
+    for (let i = 1; i < titleRuns.length; i++) hlink.removeChild(titleRuns[i]);
   }
-  onLog(`格式: H1=${stats.h1} H2=${stats.h2} 正文=${stats.body} 表格=${stats.table}`);
+}
 
-  // ── Phase 2: Extract headings and table captions ─────────────
-  onLog('提取標題資訊...');
-  const { headings, tables } = extractHeadings(body);
-  onLog(`H1=${headings.filter(h=>h.level===1).length} H2=${headings.filter(h=>h.level===2).length} 表格=${tables.length}`);
+// ── sectPr update ─────────────────────────────────────────────
 
-  // ── Phase 3: Add bookmarks to headings ───────────────────────
-  onLog('加入書籤...');
-  addBookmarks(body, headings, tables);
-
-  // ── Phase 4: Rebuild TOC ──────────────────────────────────────
-  onLog('重建目錄與表目次...');
-  rebuildTOC(body, headings, tables);
-
-  // ── Phase 5: sectPr + footer ──────────────────────────────────
-  onLog('更新分節與頁尾...');
-  let relsXml = await zip.file('word/_rels/document.xml.rels').async('string');
-  let footerRid = null;
-  const m = relsXml.match(/Id="(rId\d+)"[^>]+footer1\.xml/);
-  if (m) { footerRid = m[1]; }
-  else {
-    const nums = [...relsXml.matchAll(/rId(\d+)/g)].map(x => parseInt(x[1]));
-    footerRid = 'rId' + (nums.length ? Math.max(...nums) + 1 : 10);
+function updateMainSectPr(doc, sectPr, tplSectPr) {
+  if (!tplSectPr) return;
+  // Copy page size and margins from template
+  for (const tag of ['pgSz', 'pgMar', 'pgNumType', 'cols', 'docGrid']) {
+    rm(sectPr, tag);
+    const tplEl = findChild(tplSectPr, tag);
+    if (tplEl) sectPr.appendChild(tplEl.cloneNode(true));
   }
-  relsXml = relsXml.replace(/<Relationship[^>]+\/header\d*\.xml[^>]*\/>/g, '');
-  if (!relsXml.includes('footer1.xml')) {
+}
+
+// ── Main convert function ─────────────────────────────────────
+
+async function convert(srcBytes, tplBytes, onProgress) {
+  onProgress('解壓縮檔案…', 10);
+
+  const srcZip = await JSZip.loadAsync(srcBytes);
+  const tplZip = await JSZip.loadAsync(tplBytes);
+
+  // Load all files from source
+  const out = {};
+  for (const [name, file] of Object.entries(srcZip.files)) {
+    if (!file.dir) out[name] = await file.async('uint8array');
+  }
+
+  // Copy template styles, numbering, settings, fonts, footer
+  const TPL_COPY = ['word/styles.xml', 'word/numbering.xml', 'word/settings.xml', 'word/fontTable.xml'];
+  for (const k of TPL_COPY) {
+    const f = tplZip.file(k);
+    if (f) out[k] = await f.async('uint8array');
+  }
+  const tplFooter = tplZip.file('word/footer1.xml');
+  if (tplFooter) out['word/footer1.xml'] = await tplFooter.async('uint8array');
+
+  // Fix relationships - add footer if missing, remove headers
+  let relsXml = new TextDecoder().decode(out['word/_rels/document.xml.rels']);
+  let footerRid = (relsXml.match(/Id="(rId\d+)"[^>]+footer1\.xml/) || [])[1];
+  if (!footerRid) {
+    const nums = [...relsXml.matchAll(/rId(\d+)/g)].map(m => parseInt(m[1]));
+    footerRid = `rId${Math.max(...nums, 9) + 1}`;
     relsXml = relsXml.replace('</Relationships>',
       `<Relationship Id="${footerRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>`);
   }
-  zip.file('word/_rels/document.xml.rels', relsXml);
+  relsXml = relsXml.replace(/<Relationship[^>]+\/header[^>]+\/>/g, '');
+  out['word/_rels/document.xml.rels'] = new TextEncoder().encode(relsXml);
 
-  // Insert cover sectPr before first H1 chapter (第X章)
-  const bodyChildren = [...body.childNodes].filter(n => n.nodeType === 1);
-  const firstChapter = bodyChildren.find(el =>
-    el.localName === 'p' && el.namespaceURI === W_NS &&
-    getStyle(el) === '1' && getText(el).includes('章'));
-  if (firstChapter) {
-    // Remove any existing inner sectPr paragraphs (from previous conversion)
-    bodyChildren.forEach(el => {
-      if (el.localName === 'p' && el.namespaceURI === W_NS) {
-        const pPr = getChildW(el, 'pPr');
-        if (pPr && getChildW(pPr, 'sectPr')) body.removeChild(el);
+  // Remove header files
+  for (const k of Object.keys(out)) {
+    if (/\/header\d*\.xml/.test(k)) delete out[k];
+  }
+
+  // Fix Content_Types
+  let ct = new TextDecoder().decode(out['[Content_Types].xml']);
+  ct = ct.replace(/<Override[^>]+header\d*\.xml[^>]*\/>/g, '');
+  if (!ct.includes('footer1.xml')) {
+    ct = ct.replace('</Types>', '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>');
+  }
+  out['[Content_Types].xml'] = new TextEncoder().encode(ct);
+
+  onProgress('解析文件 XML…', 20);
+
+  const srcDocXml = new TextDecoder('utf-8').decode(out['word/document.xml']);
+  const doc = parseXML(srcDocXml);
+  const body = doc.getElementsByTagNameNS(W, 'body')[0];
+
+  // Get template sectPr for page layout
+  const tplDocBytes = tplZip.file('word/document.xml') ? await tplZip.file('word/document.xml').async('uint8array') : null;
+  let tplSectPr = null;
+  if (tplDocBytes) {
+    const tplDoc = parseXML(new TextDecoder().decode(tplDocBytes));
+    tplSectPr = tplDoc.getElementsByTagNameNS(W, 'sectPr')[0] || null;
+  }
+
+  onProgress('套用段落格式…', 35);
+
+  // Phase 1: Format all paragraphs and tables
+  let paraIdx = 0;
+  let currentChapterIdx = 0;
+  let chapterH1Count = 0;
+
+  for (const el of bodyChildren(body)) {
+    if (el.localName === 'p') {
+      const style = getStyle(el);
+      const text = getText(el);
+
+      if (!text) {
+        applyEmpty(doc, el);
+      } else if (['1', 'Heading1', 'Heading 1'].includes(style)) {
+        applyH1(doc, el);
+        if (text.includes('第') && text.includes('章')) {
+          chapterH1Count++;
+          currentChapterIdx = chapterH1Count;
+        }
+      } else if (['2', 'Heading2', 'Heading 2', '3', 'Heading3'].includes(style)) {
+        const numId = { 1: 3, 2: 4 }[currentChapterIdx] || null;
+        applyH2(doc, el, numId);
+      } else if (paraIdx < 17) {
+        const ct = text.trim();
+        if (['©', '版權所有', '本報告為委託', '僅授權委託方'].some(k => ct.includes(k))) {
+          body.removeChild(el);
+          continue;
+        }
+        applyCover(doc, el);
+      } else if (text.includes('……')) {
+        applyTocLine(doc, el);
+      } else {
+        if (['©', '版權所有', '本報告為委託', '僅授權委託方'].some(k => text.includes(k))) {
+          body.removeChild(el);
+          continue;
+        }
+        applyBody(doc, el);
+        if (text.includes('聲明事項') && text.includes('Disclaimer')) {
+          const pPr = ensurePPr(doc, el);
+          wAttr(goc(doc, pPr, 'jc'), 'val', 'left');
+          wAttr(goc(doc, pPr, 'ind'), 'firstLine', '0');
+          for (const run of directRuns(el)) {
+            const rPr = ensureRPr(doc, run);
+            if (!findChild(rPr, 'b')) rPr.appendChild(wElem(doc, 'b'));
+          }
+        } else if (text.includes('本報告採用食材平均組成值')) {
+          for (const run of directRuns(el)) {
+            const rPr = ensureRPr(doc, run);
+            if (!findChild(rPr, 'i')) rPr.appendChild(wElem(doc, 'i'));
+          }
+        }
       }
-    });
-    const coverPara = wEl(doc, 'p');
-    const cPPr = wEl(doc, 'pPr'); coverPara.appendChild(cPPr);
-    cPPr.appendChild(buildCoverSectPr(doc, footerRid));
-    body.insertBefore(coverPara, firstChapter);
+      paraIdx++;
+    } else if (el.localName === 'tbl') {
+      const tblIndex = findAll(body, 'tbl').indexOf(el);
+      applyTable(doc, el, tblIndex);
+    } else if (el.localName === 'sectPr') {
+      if (tplSectPr) updateMainSectPr(doc, el, tplSectPr);
+    }
   }
 
-  // ── Write files ───────────────────────────────────────────────
-  zip.file('word/document.xml', serXML(doc));
-  zip.file('word/footer1.xml', FOOTER_XML);
+  // Insert copyright paragraph
+  applySpecialBodyFormatting(doc, body);
 
-  let ctXml = await zip.file('[Content_Types].xml').async('string');
-  if (!ctXml.includes('footer1.xml')) {
-    ctXml = ctXml.replace('</Types>',
-      '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>');
-    zip.file('[Content_Types].xml', ctXml);
+  onProgress('修正封面空行…', 50);
+  insertCoverBlanks(doc, body);
+
+  onProgress('修正表格欄位…', 60);
+  fixTable2Widths(doc, body);
+  normalizeTableTitles(doc, body);
+
+  onProgress('更新表目次…', 70);
+  rebuildTOC(doc, body);
+
+  onProgress('序列化輸出…', 85);
+
+  const serialized = serializeXML(doc);
+  // Ensure XML declaration
+  const finalXml = serialized.startsWith('<?xml')
+    ? serialized
+    : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n${serialized}`;
+
+  out['word/document.xml'] = new TextEncoder().encode(finalXml);
+
+  onProgress('壓縮輸出檔案…', 92);
+
+  const outZip = new JSZip();
+  for (const [name, data] of Object.entries(out)) {
+    outZip.file(name, data);
   }
+  const blob = await outZip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
 
-  onLog('產生輸出檔案...');
-  return await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  onProgress('完成！', 100);
+  return blob;
 }
 
-window.convertDocx = convertDocx;
+// Export
+window.AAFCOConverter = { convert };

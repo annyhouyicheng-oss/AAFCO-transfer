@@ -1,445 +1,435 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="格式轉換">
-<meta name="theme-color" content="#1a1a1a">
-<link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-192.svg">
-<title>AAFCO 精算報告格式轉換</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #f5f4f0;
-    --surface: #ffffff;
-    --surface2: #f0ede8;
-    --ink: #1a1a1a;
-    --ink2: #6b6760;
-    --ink3: #a09d98;
-    --accent: #1a1a1a;
-    --success: #1a7a4a;
-    --success-bg: #e8f5ee;
-    --error: #c0392b;
-    --error-bg: #fdecea;
-    --border: rgba(0,0,0,0.1);
-    --radius: 16px;
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #111110;
-      --surface: #1c1c1a;
-      --surface2: #252523;
-      --ink: #f0ede8;
-      --ink2: #9a9590;
-      --ink3: #5a5753;
-      --accent: #f0ede8;
-      --success: #4ade80;
-      --success-bg: #0a2e1a;
-      --error: #f87171;
-      --error-bg: #2e0a0a;
-      --border: rgba(255,255,255,0.08);
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AAFCO 精算報告格式轉換工具 v19</title>
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#1F3864"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <link rel="icon" href="icon-192.svg"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      background: #0f1c33;
+      color: #e8edf5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
-  }
 
-  html, body { height: 100%; background: var(--bg); color: var(--ink); font-family: -apple-system, 'PingFang TC', 'Noto Sans TC', sans-serif; }
+    header {
+      width: 100%;
+      background: linear-gradient(135deg, #1F3864 0%, #2a4a85 100%);
+      padding: 28px 24px 20px;
+      text-align: center;
+      border-bottom: 2px solid #3a5fa0;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
 
-  .app {
-    min-height: 100%;
-    padding: calc(var(--safe-top) + 24px) 20px calc(var(--safe-bottom) + 32px);
-    max-width: 480px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-  }
+    header h1 {
+      font-size: 1.45rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: #fff;
+    }
 
-  /* Header */
-  .header { padding-top: 8px; }
-  .header h1 {
-    font-size: 22px; font-weight: 700; letter-spacing: -0.5px;
-    color: var(--ink); line-height: 1.2;
-  }
-  .header p { margin-top: 6px; font-size: 14px; color: var(--ink2); line-height: 1.5; }
+    header p {
+      margin-top: 6px;
+      font-size: 0.82rem;
+      color: #90CAF9;
+      letter-spacing: 0.03em;
+    }
 
-  /* Drop zone */
-  .dropzone {
-    border: 1.5px dashed var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    padding: 40px 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s, transform 0.1s;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .dropzone:active { transform: scale(0.98); }
-  .dropzone.dragover { background: var(--surface2); border-color: var(--ink3); }
-  .dz-icon { font-size: 40px; line-height: 1; margin-bottom: 12px; }
-  .dz-title { font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
-  .dz-sub { font-size: 13px; color: var(--ink3); }
-  #fileInput { display: none; }
+    .badge {
+      display: inline-block;
+      background: #3a5fa0;
+      color: #90CAF9;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      margin-top: 8px;
+      letter-spacing: 0.06em;
+    }
 
-  /* File card */
-  .file-card {
-    display: none;
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    align-items: center;
-    gap: 14px;
-    border: 1px solid var(--border);
-  }
-  .file-card.show { display: flex; }
-  .file-icon { font-size: 28px; flex-shrink: 0; }
-  .file-info { flex: 1; min-width: 0; }
-  .file-name { font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .file-size { font-size: 12px; color: var(--ink3); margin-top: 2px; }
-  .rm-btn {
-    background: var(--surface2); border: none; border-radius: 50%;
-    width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-    cursor: pointer; color: var(--ink2); font-size: 16px; flex-shrink: 0;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .rm-btn:active { opacity: 0.6; }
+    main {
+      width: 100%;
+      max-width: 680px;
+      padding: 32px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
 
-  /* Convert button */
-  .convert-btn {
-    width: 100%; padding: 16px;
-    background: var(--accent); color: var(--bg);
-    border: none; border-radius: var(--radius);
-    font-size: 16px; font-weight: 700; letter-spacing: 0.2px;
-    cursor: pointer; transition: opacity 0.2s, transform 0.1s;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .convert-btn:disabled { opacity: 0.25; cursor: not-allowed; }
-  .convert-btn:not(:disabled):active { transform: scale(0.97); opacity: 0.85; }
+    .card {
+      background: #1a2e52;
+      border: 1px solid #2d4a7a;
+      border-radius: 14px;
+      padding: 24px;
+    }
 
-  /* Progress */
-  .progress-card {
-    display: none;
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 24px 20px;
-    border: 1px solid var(--border);
-  }
-  .progress-card.show { display: block; }
-  .progress-label { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
-  .progress-bar { height: 5px; background: var(--surface2); border-radius: 99px; overflow: hidden; margin-bottom: 14px; }
-  .progress-fill { height: 100%; background: var(--accent); border-radius: 99px; width: 0%; transition: width 0.4s cubic-bezier(0.4,0,0.2,1); }
-  .log { font-size: 12px; color: var(--ink2); line-height: 1.8; font-family: 'SF Mono', 'Menlo', monospace; }
+    .card-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #64B5F6;
+      margin-bottom: 14px;
+    }
 
-  /* Result */
-  .result-card {
-    display: none;
-    background: var(--success-bg);
-    border-radius: var(--radius);
-    padding: 20px;
-    border: 1px solid rgba(26,122,74,0.15);
-  }
-  .result-card.show { display: block; }
-  .result-top { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-  .result-check { font-size: 28px; }
-  .result-info .rt { font-size: 15px; font-weight: 700; color: var(--success); }
-  .result-info .rs { font-size: 12px; color: var(--ink2); margin-top: 2px; }
-  .dl-btn {
-    display: block; width: 100%;
-    background: var(--success); color: white;
-    border: none; border-radius: 12px;
-    padding: 14px; font-size: 15px; font-weight: 700;
-    text-align: center; text-decoration: none;
-    cursor: pointer; -webkit-tap-highlight-color: transparent;
-    transition: opacity 0.2s, transform 0.1s;
-  }
-  .dl-btn:active { transform: scale(0.97); opacity: 0.85; }
-  .reset-link {
-    display: block; text-align: center; margin-top: 14px;
-    font-size: 13px; color: var(--ink2); background: none; border: none;
-    cursor: pointer; -webkit-tap-highlight-color: transparent; padding: 4px;
-  }
-  .reset-link:active { opacity: 0.6; }
+    .drop-zone {
+      border: 2px dashed #3a5fa0;
+      border-radius: 10px;
+      padding: 28px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #0f1c33;
+      position: relative;
+    }
 
-  /* Error */
-  .error-card {
-    display: none; background: var(--error-bg);
-    border-radius: var(--radius); padding: 16px 20px;
-    font-size: 14px; color: var(--error); border: 1px solid rgba(192,57,43,0.15);
-  }
-  .error-card.show { display: block; }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: #64B5F6;
+      background: #162440;
+    }
 
-  /* Install prompt */
-  .install-banner {
-    display: none;
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    border: 1px solid var(--border);
-    align-items: center;
-    gap: 14px;
-  }
-  .install-banner.show { display: flex; }
-  .install-icon { font-size: 24px; flex-shrink: 0; }
-  .install-text { flex: 1; }
-  .install-text .it { font-size: 14px; font-weight: 600; color: var(--ink); }
-  .install-text .is { font-size: 12px; color: var(--ink2); margin-top: 2px; line-height: 1.4; }
-  .install-btn {
-    background: var(--accent); color: var(--bg);
-    border: none; border-radius: 10px; padding: 8px 16px;
-    font-size: 13px; font-weight: 700; cursor: pointer; flex-shrink: 0;
-    -webkit-tap-highlight-color: transparent;
-  }
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
 
-  /* iOS install tip */
-  .ios-tip {
-    display: none;
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    border: 1px solid var(--border);
-    font-size: 13px; color: var(--ink2); line-height: 1.6;
-  }
-  .ios-tip.show { display: block; }
-  .ios-tip strong { color: var(--ink); }
-  .ios-tip .step { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
-  .ios-tip .step-num { background: var(--surface2); border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; color: var(--ink); }
+    .drop-icon {
+      font-size: 2.2rem;
+      margin-bottom: 10px;
+    }
 
-  .footer { text-align: center; font-size: 11px; color: var(--ink3); margin-top: 8px; }
-</style>
+    .drop-label {
+      font-size: 0.9rem;
+      color: #90CAF9;
+      font-weight: 500;
+    }
+
+    .drop-sub {
+      font-size: 0.75rem;
+      color: #5a7aaa;
+      margin-top: 5px;
+    }
+
+    .file-chosen {
+      margin-top: 10px;
+      font-size: 0.8rem;
+      color: #4CAF50;
+      font-weight: 600;
+      display: none;
+    }
+
+    .file-chosen.visible { display: block; }
+
+    .btn {
+      width: 100%;
+      padding: 16px;
+      background: linear-gradient(135deg, #1F3864 0%, #2a5298 100%);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.04em;
+      box-shadow: 0 4px 15px rgba(31,56,100,0.5);
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(31,56,100,0.7);
+      background: linear-gradient(135deg, #2a4a85 0%, #3060b0 100%);
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .progress-wrap {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .progress-wrap.visible { display: flex; }
+
+    .progress-bar-bg {
+      height: 8px;
+      background: #0f1c33;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #1565C0, #42A5F5);
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .progress-label {
+      font-size: 0.82rem;
+      color: #90CAF9;
+      text-align: center;
+    }
+
+    .result {
+      display: none;
+      text-align: center;
+      padding: 10px 0;
+    }
+
+    .result.visible { display: block; }
+
+    .result a {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #1B5E20;
+      color: #A5D6A7;
+      padding: 14px 28px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: background 0.2s;
+      box-shadow: 0 4px 15px rgba(0,100,0,0.3);
+    }
+
+    .result a:hover { background: #2E7D32; }
+
+    .error {
+      display: none;
+      background: #4a1c1c;
+      border: 1px solid #8B0000;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 0.83rem;
+      color: #EF9A9A;
+      word-break: break-all;
+    }
+
+    .error.visible { display: block; }
+
+    .info-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .info-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: #8aabd4;
+      line-height: 1.5;
+    }
+
+    .info-list li::before {
+      content: '✦';
+      color: #3a5fa0;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    footer {
+      margin-top: auto;
+      padding: 20px;
+      font-size: 0.72rem;
+      color: #3a5270;
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 480px) {
+      header h1 { font-size: 1.15rem; }
+      .card { padding: 18px; }
+    }
+  </style>
 </head>
 <body>
-<div class="app">
 
-  <div class="header">
-    <h1>AAFCO 格式轉換</h1>
-    <p>將精算報告 .docx 自動套用標準排版格式，無需安裝軟體</p>
-  </div>
+<header>
+  <h1>🐾 AAFCO 精算報告格式轉換工具</h1>
+  <p>Pet Food Nutritional Report Auto-Formatter</p>
+  <span class="badge">v19 · 全端離線運行</span>
+</header>
 
-  <!-- Install banners -->
-  <div class="install-banner" id="installBanner">
-    <div class="install-icon">📲</div>
-    <div class="install-text">
-      <div class="it">安裝到主畫面</div>
-      <div class="is">可離線使用，像一般 App 一樣開啟</div>
+<main>
+
+  <!-- Source file -->
+  <div class="card">
+    <div class="card-title">① 原始報告檔案（待轉換）</div>
+    <div class="drop-zone" id="srcZone">
+      <input type="file" id="srcFile" accept=".docx"/>
+      <div class="drop-icon">📄</div>
+      <div class="drop-label">點擊或拖曳上傳 .docx</div>
+      <div class="drop-sub">原始 AAFCO 精算報告（未排版）</div>
     </div>
-    <button class="install-btn" id="installBtn">安裝</button>
+    <div class="file-chosen" id="srcChosen"></div>
   </div>
 
-  <div class="ios-tip" id="iosTip">
-    <strong style="display:block;margin-bottom:10px;">📲 安裝到 iPhone 主畫面</strong>
-    <div class="step"><div class="step-num">1</div><div>點下方工具列的 <strong>分享</strong> 按鈕（方框加箭頭 ↑）</div></div>
-    <div class="step"><div class="step-num">2</div><div>往下滑找到「<strong>加入主畫面</strong>」並點擊</div></div>
-    <div class="step"><div class="step-num">3</div><div>點右上角「<strong>新增</strong>」完成安裝</div></div>
-    <button class="reset-link" id="dismissIOS" style="text-align:left;margin-top:4px;">關閉此提示</button>
+  <!-- Template file -->
+  <div class="card">
+    <div class="card-title">② 模板檔案（排版標準）</div>
+    <div class="drop-zone" id="tplZone">
+      <input type="file" id="tplFile" accept=".docx"/>
+      <div class="drop-icon">📋</div>
+      <div class="drop-label">點擊或拖曳上傳模板 .docx</div>
+      <div class="drop-sub">排版用這份檔案格式.docx</div>
+    </div>
+    <div class="file-chosen" id="tplChosen"></div>
+  </div>
+
+  <!-- Convert button -->
+  <button class="btn" id="convertBtn" disabled>開始轉換</button>
+
+  <!-- Progress -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label" id="progressLabel">準備中…</div>
+    <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
   </div>
 
   <!-- Error -->
-  <div class="error-card" id="errorCard"></div>
+  <div class="error" id="errorBox"></div>
 
-  <!-- Drop zone -->
-  <div class="dropzone" id="dropzone">
-    <div class="dz-icon">📄</div>
-    <div class="dz-title">選擇 .docx 檔案</div>
-    <div class="dz-sub">點擊或拖曳檔案到這裡</div>
-    <input type="file" id="fileInput" accept=".docx">
+  <!-- Result download -->
+  <div class="result" id="resultBox"></div>
+
+  <!-- Info -->
+  <div class="card">
+    <div class="card-title">轉換項目 v19</div>
+    <ul class="info-list">
+      <li>封面格式：sz=28、無粗體、去除分隔線、專案編號/研發配方/目標對象靠左對齊</li>
+      <li>封面空行：依模板精確插入（已絕育後+1、Effects後+3、目標對象後+3）</li>
+      <li>H1 章標題 / H2 節標題 樣式重建（含自動節次編號）</li>
+      <li>三線表格格式：header 粗線、末行粗線、小標題細線（礦物質/維生素等）</li>
+      <li>表三維生素 A/D3/E/B1/B2/菸鹼酸B3/B6 個別行不加邊線</li>
+      <li>表二數值欄縮小（900 DXA）、單位欄加寬（1500 DXA）</li>
+      <li>表格標題縮短（移除 FMLA-N-D10-08 前綴及冗長說明）</li>
+      <li>聲明事項加粗靠左、免責聲明斜體、版權行紅色加粗</li>
+      <li>AAFCO 整體合規判定行紅色、符合/不足/邊緣自動著色</li>
+      <li>套用模板樣式表、頁碼頁尾、移除頁首</li>
+      <li>所有處理均在瀏覽器本地完成，檔案不上傳伺服器</li>
+    </ul>
   </div>
 
-  <!-- File ready -->
-  <div class="file-card" id="fileCard">
-    <div class="file-icon">📝</div>
-    <div class="file-info">
-      <div class="file-name" id="fileName"></div>
-      <div class="file-size" id="fileSize"></div>
-    </div>
-    <button class="rm-btn" id="rmBtn">✕</button>
-  </div>
+</main>
 
-  <!-- Convert -->
-  <button class="convert-btn" id="convertBtn" disabled>開始轉換格式</button>
-
-  <!-- Progress -->
-  <div class="progress-card" id="progressCard">
-    <div class="progress-label" id="progressLabel">準備中...</div>
-    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-    <div class="log" id="log"></div>
-  </div>
-
-  <!-- Result -->
-  <div class="result-card" id="resultCard">
-    <div class="result-top">
-      <div class="result-check">✅</div>
-      <div class="result-info">
-        <div class="rt">格式轉換成功</div>
-        <div class="rs" id="resultSub"></div>
-      </div>
-    </div>
-    <a class="dl-btn" id="dlBtn" href="#" download="">⬇ 下載轉換後的檔案</a>
-    <button class="reset-link" id="resetBtn">重新轉換另一個檔案</button>
-  </div>
-
-  <div class="footer">檔案僅在您的裝置上處理，不會上傳至任何伺服器</div>
-
-</div>
+<footer>
+  © 2026 Yi-Cheng Hou, Ph.D. · AAFCO Formatter v19<br/>
+  本工具僅作研發配方評估之參考依據，不構成最終產品之營養保證。
+</footer>
 
 <!-- JSZip from CDN -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="converter.js"></script>
 <script>
-// ── UI 狀態 ──────────────────────────────────────────────
-let selectedFile = null;
-let deferredPrompt = null;
-
-const $ = id => document.getElementById(id);
-
-function fmt(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1048576) return Math.round(b / 1024) + ' KB';
-  return (b / 1048576).toFixed(1) + ' MB';
-}
-
-function showError(msg) {
-  const c = $('errorCard');
-  c.textContent = '⚠️ ' + msg;
-  c.classList.add('show');
-}
-function clearError() { $('errorCard').classList.remove('show'); }
-
-function setProgress(pct, label) {
-  $('progressFill').style.width = pct + '%';
-  $('progressLabel').textContent = label;
-}
-
-function appendLog(msg) {
-  const l = $('log');
-  l.textContent += msg + '\n';
-}
-
-// ── 檔案選擇 ─────────────────────────────────────────────
-function setFile(file) {
-  if (!file || !file.name.toLowerCase().endsWith('.docx')) {
-    showError('請選擇 .docx 格式的檔案'); return;
+  // Service worker registration
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
-  clearError();
-  selectedFile = file;
-  $('dropzone').style.display = 'none';
-  $('fileCard').classList.add('show');
-  $('fileName').textContent = file.name;
-  $('fileSize').textContent = fmt(file.size);
-  $('convertBtn').disabled = false;
-}
 
-$('dropzone').addEventListener('click', () => $('fileInput').click());
-$('dropzone').addEventListener('dragover', e => { e.preventDefault(); $('dropzone').classList.add('dragover'); });
-$('dropzone').addEventListener('dragleave', () => $('dropzone').classList.remove('dragover'));
-$('dropzone').addEventListener('drop', e => {
-  e.preventDefault(); $('dropzone').classList.remove('dragover');
-  if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
-});
-$('fileInput').addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
+  const srcFileInput = document.getElementById('srcFile');
+  const tplFileInput = document.getElementById('tplFile');
+  const convertBtn   = document.getElementById('convertBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressBar  = document.getElementById('progressBar');
+  const progressLabel = document.getElementById('progressLabel');
+  const resultBox    = document.getElementById('resultBox');
+  const errorBox     = document.getElementById('errorBox');
+  const srcChosen    = document.getElementById('srcChosen');
+  const tplChosen    = document.getElementById('tplChosen');
 
-$('rmBtn').addEventListener('click', () => {
-  selectedFile = null;
-  $('dropzone').style.display = '';
-  $('fileCard').classList.remove('show');
-  $('convertBtn').disabled = true;
-  $('fileInput').value = '';
-  clearError();
-});
+  let srcBytes = null, tplBytes = null;
 
-function resetAll() {
-  selectedFile = null;
-  $('dropzone').style.display = '';
-  $('fileCard').classList.remove('show');
-  $('convertBtn').disabled = true;
-  $('convertBtn').style.display = '';
-  $('progressCard').classList.remove('show');
-  $('resultCard').classList.remove('show');
-  $('log').textContent = '';
-  $('fileInput').value = '';
-  clearError();
-}
-$('resetBtn').addEventListener('click', resetAll);
-
-// ── 轉換 ─────────────────────────────────────────────────
-$('convertBtn').addEventListener('click', async () => {
-  if (!selectedFile) return;
-  clearError();
-  $('convertBtn').style.display = 'none';
-  $('progressCard').classList.add('show');
-  $('log').textContent = '';
-  setProgress(0, '準備中...');
-
-  const steps = [
-    [15, '讀取 DOCX...'],
-    [35, '解析文件結構...'],
-    [55, '套用段落格式...'],
-    [75, '修正表格格式...'],
-    [88, '更新頁面設定...'],
-    [95, '寫入樣式與頁尾...'],
-    [100, '完成！']
-  ];
-  let si = 0;
-  const ticker = setInterval(() => {
-    if (si < steps.length - 1) { setProgress(steps[si][0], steps[si][1]); si++; }
-  }, 600);
-
-  try {
-    const blob = await convertDocx(selectedFile, msg => appendLog(msg));
-    clearInterval(ticker);
-    setProgress(100, '完成！');
-    await new Promise(r => setTimeout(r, 400));
-
-    const baseName = selectedFile.name.replace(/\.docx$/i, '');
-    const outName = baseName + '_formatted.docx';
-    const url = URL.createObjectURL(blob);
-    $('dlBtn').href = url;
-    $('dlBtn').download = outName;
-    $('resultSub').textContent = outName + ' · ' + fmt(blob.size);
-
-    $('progressCard').classList.remove('show');
-    $('resultCard').classList.add('show');
-  } catch (e) {
-    clearInterval(ticker);
-    $('progressCard').classList.remove('show');
-    $('convertBtn').style.display = '';
-    showError(e.message || '未知錯誤');
-    appendLog('❌ ' + e.message);
+  function readFile(file) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = e => res(new Uint8Array(e.target.result));
+      fr.onerror = rej;
+      fr.readAsArrayBuffer(file);
+    });
   }
-});
 
-// ── PWA 安裝 ─────────────────────────────────────────────
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  function checkReady() {
+    convertBtn.disabled = !(srcBytes && tplBytes);
+  }
 
-if (!isStandalone) {
-  if (isIOS) {
-    $('iosTip').classList.add('show');
-    $('dismissIOS').addEventListener('click', () => $('iosTip').classList.remove('show'));
-  } else {
-    window.addEventListener('beforeinstallprompt', e => {
+  function setupDrop(zone, input, chosenEl, label) {
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', async e => {
       e.preventDefault();
-      deferredPrompt = e;
-      $('installBanner').classList.add('show');
+      zone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith('.docx')) {
+        if (label === 'src') { srcBytes = await readFile(file); srcChosen.textContent = '✓ ' + file.name; srcChosen.classList.add('visible'); }
+        else { tplBytes = await readFile(file); tplChosen.textContent = '✓ ' + file.name; tplChosen.classList.add('visible'); }
+        checkReady();
+      }
     });
-    $('installBtn').addEventListener('click', async () => {
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      $('installBanner').classList.remove('show');
+    input.addEventListener('change', async () => {
+      const file = input.files[0];
+      if (!file) return;
+      if (label === 'src') { srcBytes = await readFile(file); srcChosen.textContent = '✓ ' + file.name; srcChosen.classList.add('visible'); }
+      else { tplBytes = await readFile(file); tplChosen.textContent = '✓ ' + file.name; tplChosen.classList.add('visible'); }
+      checkReady();
     });
   }
-}
 
-// ── Service Worker ────────────────────────────────────────
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+  setupDrop(document.getElementById('srcZone'), srcFileInput, srcChosen, 'src');
+  setupDrop(document.getElementById('tplZone'), tplFileInput, tplChosen, 'tpl');
+
+  convertBtn.addEventListener('click', async () => {
+    if (!srcBytes || !tplBytes) return;
+
+    // Reset UI
+    resultBox.classList.remove('visible');
+    errorBox.classList.remove('visible');
+    progressWrap.classList.add('visible');
+    convertBtn.disabled = true;
+    progressBar.style.width = '0%';
+
+    try {
+      const blob = await window.AAFCOConverter.convert(srcBytes, tplBytes, (msg, pct) => {
+        progressLabel.textContent = msg;
+        progressBar.style.width = pct + '%';
+      });
+
+      const url = URL.createObjectURL(blob);
+      const srcName = srcFileInput.files[0]?.name || 'report.docx';
+      const outName = srcName.replace(/\.docx$/i, '') + '_formatted_v19.docx';
+
+      resultBox.innerHTML = `<a href="${url}" download="${outName}">⬇ 下載轉換結果：${outName}</a>`;
+      resultBox.classList.add('visible');
+    } catch (err) {
+      errorBox.textContent = '❌ 轉換失敗：' + (err.message || String(err));
+      errorBox.classList.add('visible');
+      console.error(err);
+    } finally {
+      progressWrap.classList.remove('visible');
+      convertBtn.disabled = false;
+    }
   });
-}
 </script>
 </body>
 </html>
